@@ -118,26 +118,13 @@ function proxCobro(dia){
   if(dd<t.getDate()){m++;if(m>11){m=0;y++}dd=Math.min(dia,diasMes(y,m))}
   return y+"-"+pad(m+1)+"-"+pad(dd);
 }
-function hipProx(){
-  if(!D.hip.monto)return null;
-  const t=new Date(),hoy=ymd(t),dia=D.hip.dia||1;
-  let y,m;
-  if(D.pagos.length){
-    const ult=D.pagos.map(p=>p.mes).sort().pop();           // el siguiente mes despues del ultimo pago registrado
-    y=+ult.slice(0,4);m=+ult.slice(5)-1+1;
-  }else{                                                     // sin pagos: la proxima fecha real de pago
-    y=t.getFullYear();m=t.getMonth();
-    if(Math.min(dia,diasMes(y,m))<t.getDate())m++;
-  }
-  for(let i=0;i<36;i++){
-    const d=new Date(y,m+i,1),mes=d.getFullYear()+"-"+pad(d.getMonth()+1);
-    if(!D.pagos.some(p=>p.mes===mes)){
-      const fecha=mes+"-"+pad(Math.min(dia,diasMes(d.getFullYear(),d.getMonth())));
-      const dias=Math.round((new Date(fecha+"T00:00:00")-new Date(hoy+"T00:00:00"))/864e5);
-      return{mes,fecha,dias,vencida:dias<0};
-    }
-  }
-  return null;
+const pagados=()=>D.pagos.filter(p=>p.registrado_por!=="pendiente");
+function hipPlan(){
+  const hoy=ymd(new Date());
+  const pl=D.pagos.filter(p=>p.registrado_por==="pendiente").sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  if(!pl.length)return null;
+  const p=pl[0],dias=Math.round((new Date(p.fecha+"T00:00:00")-new Date(hoy+"T00:00:00"))/864e5);
+  return{...p,dias,vencida:dias<0};
 }
 
 /* ---------- sesión ---------- */
@@ -210,7 +197,7 @@ function vResumen(){
   const efe=D.gastos.filter(g=>g.tarjeta==="Efectivo");
   const hoyL=efe.filter(g=>g.fecha===hoy),mesE=efe.filter(g=>g.fecha&&g.fecha.startsWith(k));
   const deudas=D.gastos.filter(g=>g.deuda&&!g.saldada);
-  const hp=hipProx(),hipPend=hp&&(hp.vencida||hp.dias<=5);
+  const hp=hipPlan(),hipPend=hp&&(hp.vencida||hp.dias<=5);
   const nPend=deudas.length+(hipPend?1:0);
   const fecha=new Date().toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long"});
   const mesAll=mesG().filter(g=>TARJ.some(x=>x[0]===g.tarjeta));
@@ -221,7 +208,7 @@ function vResumen(){
     const mio=tot-neg-sum(compL)+compMio;
     return `<div class="card kcard" style="--c:var(${c})"><div class="row"><h3>${t}</h3><span class="num">${fmt(tot)}</span></div>
      <div class="tri"><div><span class="mut">Mío</span><b class="num">${fmt(mio)}</b></div><div><span class="mut">Sofi</span><b class="num">${fmt(compSofi)}</b></div><div><span class="mut">Negocio</span><b class="num">${fmt(neg)}</b></div></div></div>`}).join("");
-  const hipFila=hipPend?`<div class="item s2"><div class="n">Hipoteca<div class="mut ${hp.vencida?"warn":""}">${hp.vencida?"Vencida el ":"Vence el "}${fd(hp.fecha)}</div></div><span class="num">${fmt(D.hip.monto)}</span><button data-go="hipoteca">Registrar</button></div>`:"";
+  const hipFila=hipPend?`<div class="item s2"><div class="n">Hipoteca<div class="mut ${hp.vencida?"warn":""}">${hp.vencida?"Vencida el ":"Vence el "}${fd(hp.fecha)}</div></div><span class="num">${fmt(hp.monto)}</span><button data-pay="${esc(hp.id)}">Registrar pago</button></div>`:"";
   return `<div class="card"><div class="mut">${fecha.charAt(0).toUpperCase()+fecha.slice(1)}</div>
    <div class="mut" style="margin-top:6px">Efectivo gastado hoy</div><div class="total">${fmt(sum(hoyL))}</div>
    <div class="mut">${hoyL.length} ${hoyL.length===1?"gasto":"gastos"} hoy · este mes en efectivo: <b>${fmt(sum(mesE))}</b></div></div>
@@ -229,7 +216,8 @@ function vResumen(){
    <div class="card"><div class="row" style="margin-bottom:4px"><h2>Pendiente</h2><span class="${nPend?"warn":"ok"}">${nPend?nPend+(nPend===1?" pendiente":" pendientes"):"Todo al día"}</span></div>
    ${deudas.map(fila).join("")}${hipFila}
    ${nPend?"":'<div class="empty">No hay deudas ni pagos pendientes.</div>'}
-   ${hp&&!hipPend?`<div class="mut" style="margin-top:8px">Próximo pago de hipoteca: <b>${fd(hp.fecha)}</b> · ${fmt(D.hip.monto)}</div>`:""}</div>
+   ${hp&&!hipPend?`<div class="mut" style="margin-top:8px">Próximo pago de hipoteca: <b>${fd(hp.fecha)}</b> · ${fmt(hp.monto)}</div>`:""}
+   ${!hp?`<div class="row" style="margin-top:8px"><span class="mut">Hipoteca: aún no programas el próximo pago.</span><button data-go="hipoteca">Programar</button></div>`:""}</div>
    <h2 style="margin-top:4px">Corte de tarjetas</h2><div class="grid">${corte}</div>`;
 }
 
@@ -279,31 +267,38 @@ function vFijos(){
 }
 
 function vHipoteca(){
-  const h=D.hip,o=owner(),hp=hipProx();
-  const lista=[...D.pagos].sort((a,b)=>b.mes.localeCompare(a.mes)).map(p=>`<div class="item s2"><div class="n">Pago de ${esc(MES[+p.mes.slice(5)-1])} ${p.mes.slice(0,4)}<div class="mut">Pagado el ${fd(p.fecha)}${p.registrado_por==="esposa"?(o?" · registró Sofi":" · registraste tú"):(o?"":" · registró tu pareja")}</div></div><span class="num">${fmt(p.monto)}</span>${o?`<button class="x" data-edit="pagos" data-id="${esc(p.id)}" aria-label="Editar">✎</button>`:"<span></span>"}</div>`).join("")||'<div class="empty">Aún no hay pagos registrados.</div>';
-  const totPag=D.pagos.reduce((s,p)=>s+p.monto,0);
-  const mitad=(h.monto||0)/2;
-  let prox='';
-  if(h.monto&&hp){
+  const h=D.hip,o=owner(),hp=hipPlan();
+  const todos=[...D.pagos].sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const lista=todos.map(p=>{const pend=p.registrado_por==="pendiente";
+    const quien=!pend&&p.registrado_por==="esposa"?(o?" · registró Sofi":" · registraste tú"):"";
+    return `<div class="item s2"><div class="n">Pago de ${esc(MES[+p.mes.slice(5)-1])} ${p.mes.slice(0,4)}<div class="mut">${pend?`<b class="${p.fecha<ymd(new Date())?"warn":""}">Por pagar el ${fd(p.fecha)}</b>`:`Pagado el ${fd(p.fecha)}${quien}`}</div></div><span class="num">${fmt(p.monto)}</span>${o?`<button class="x" data-edit="pagos" data-id="${esc(p.id)}" aria-label="Editar">✎</button>`:"<span></span>"}</div>`}).join("")||'<div class="empty">Aún no hay pagos registrados.</div>';
+  const totPag=pagados().reduce((s,p)=>s+p.monto,0);
+  let prox="";
+  if(hp){
     const est=hp.vencida?`<span class="warn">Vencida hace ${-hp.dias} ${-hp.dias===1?"día":"días"}</span>`:hp.dias===0?'<span class="warn">Vence hoy</span>':`<span class="mut">Faltan ${hp.dias} ${hp.dias===1?"día":"días"}</span>`;
+    const mitad=hp.monto/2;
     prox=`<section class="card"><div class="mut">Próximo pago</div><div class="big">${fd(hp.fecha)}</div><div>${est}</div>
-     <div class="row" style="margin-top:12px"><span>Pago mensual</span><b class="num">${fmt(h.monto)}</b></div>
+     <div class="row" style="margin-top:12px"><span>A pagar</span><b class="num">${fmt(hp.monto)}</b></div>
      ${o?`<div class="row"><span>Yo (50%)</span><b class="num">${fmt(mitad)}</b></div><div class="row"><span>Sofi (50%)</span><b class="num">${fmt(mitad)}</b></div>`:`<div class="row"><span>Tu parte (50%)</span><b class="num">${fmt(mitad)}</b></div>`}
-     ${h.nota?`<div class="mut" style="margin-top:6px">${esc(h.nota)}</div>`:""}</section>
-     <section class="card"><h2 style="margin-bottom:12px">Registrar pago</h2>
-     <form id="frp"><label>Mes que cubre<input id="r-mes" type="month" required value="${hp.mes}"></label>
-     <label>Fecha en que se pagó<input id="r-fecha" type="date" required value="${ymd(new Date())}"></label>
-     <label>Monto pagado<input id="r-monto" type="number" min="0.01" step="any" inputmode="decimal" required value="${h.monto}"></label>
-     <button class="pri full" type="submit">Registrar pago</button></form></section>`;
-  }else if(!h.monto){prox=`<section class="card"><div class="empty">${o?"Captura abajo los datos de la hipoteca para empezar.":"El dueño aún no configura la hipoteca."}</div></section>`}
+     ${o?`<div class="actions" style="margin-top:12px"><button class="pri" data-pay="${esc(hp.id)}">Registrar pago</button><button data-edit="pagos" data-id="${esc(hp.id)}">Cambiar monto o fecha</button></div>`:""}</section>`;
+  }else{
+    prox=`<section class="card"><div class="empty">${o?"No hay un pago programado. Captura abajo el monto y la fecha del próximo pago.":"El dueño aún no programa el próximo pago."}</div></section>`;
+  }
+  const meses=D.pagos.map(p=>p.mes).sort(),ult=meses.length?meses[meses.length-1]:null;
+  let mesDef=ymNow();if(ult){const y=+ult.slice(0,4),m=+ult.slice(5);const d=new Date(y,m,1);mesDef=d.getFullYear()+"-"+pad(d.getMonth()+1)}
+  const montoDef=todos.length?todos[0].monto:"";
+  const form=o?`<section class="card"><h2 style="margin-bottom:4px">${hp?"Programar otro pago":"Programar pago"}</h2><div class="mut" style="margin-bottom:12px">El monto cambia cada mes: captúralo aquí con su fecha.</div>
+   <form id="frp"><label>Mes que cubre<input id="r-mes" type="month" required value="${mesDef}"></label>
+   <label>Monto a pagar<input id="r-monto" type="number" min="0.01" step="any" inputmode="decimal" required value="${montoDef}"></label>
+   <label>Fecha de pago<input id="r-fecha" type="date" required></label>
+   <label>Estado<select id="r-est"><option value="pendiente">Por pagar</option><option value="pagado">Ya pagado</option></select></label>
+   <button class="pri full" type="submit">Guardar pago</button></form></section>`:"";
   const cfg=o?`<section class="card"><h2 style="margin-bottom:12px">Datos de la hipoteca</h2>
-   <form id="fh"><label>Pago mensual<input id="h-monto" type="number" min="0" step="any" inputmode="decimal" value="${h.monto||""}"></label>
-   <label>Día de pago cada mes<input id="h-dia" type="number" min="1" max="31" value="${h.dia||""}"></label>
+   <form id="fh"><label>Banco o referencia<input id="h-nota" maxlength="40" value="${esc(h.nota||"")}"></label>
    <label>Saldo al empezar (opcional)<input id="h-saldo" type="number" min="0" step="any" inputmode="decimal" value="${h.saldo||""}"></label>
-   <label>Banco o referencia<input id="h-nota" maxlength="40" value="${esc(h.nota||"")}"></label>
    <button class="pri full" type="submit">Guardar datos</button></form>
    ${h.saldo?`<div class="mut" style="margin-top:8px">Saldo actual: <b>${fmt(Math.max(0,h.saldo-totPag))}</b> (saldo inicial menos pagos registrados)</div>`:""}</section>`:"";
-  return `${prox}<section class="card"><h3>Pagos registrados</h3>${lista}</section>${cfg}`;
+  return `${prox}${form}<section class="card"><h3>Pagos</h3>${lista}</section>${cfg}${h.nota&&!o?`<div class="mut">${esc(h.nota)}</div>`:""}`;
 }
 
 function vAcceso(){
@@ -344,9 +339,11 @@ function vEdit(){
     <label>Tipo<select id="e-tipo">${topt(TT,row.tipo)}</select></label>`;
   }else{
     titulo="pago de hipoteca";
+    const pre=!!edit.preset,pagado=pre||row.registrado_por!=="pendiente";
     campos=`<label>Mes que cubre<input id="e-mes" type="month" required value="${esc(row.mes)}"></label>
-    <label>Fecha en que se pagó<input id="e-date" type="date" required value="${esc(row.fecha)}"></label>
-    <label>Monto pagado<input id="e-amt" type="number" min="0.01" step="any" inputmode="decimal" required value="${row.monto}"></label>`;
+    <label>Monto${pagado?" pagado":" a pagar"}<input id="e-amt" type="number" min="0.01" step="any" inputmode="decimal" required value="${row.monto}"></label>
+    <label>Fecha de pago<input id="e-date" type="date" required value="${pre?ymd(new Date()):esc(row.fecha)}"></label>
+    <label>Estado<select id="e-est"><option value="pendiente"${pagado?"":" selected"}>Por pagar</option><option value="pagado"${pagado?" selected":""}>Ya pagado</option></select></label>`;
   }
   return `<section class="card"><h2 style="margin-bottom:12px">Editar ${titulo}</h2><form id="fe">${campos}
    <div class="full actions"><button class="pri" type="submit">Guardar cambios</button><button type="button" data-act="canc">Cancelar</button><button type="button" class="danger" data-act="del">${armed?"Sí, eliminar":"Eliminar"}</button></div></form>
@@ -396,6 +393,7 @@ document.addEventListener("click",e=>{
   const t=e.target.closest("button")||e.target,a=t.dataset&&t.dataset.act;
   if(t.tagName==="BUTTON"&&document.activeElement&&document.activeElement.blur)document.activeElement.blur();
   if(t.dataset&&t.dataset.go){tab=t.dataset.go;edit=null;say("");render();return}
+  if(t.dataset&&t.dataset.pay){edit={k:"pagos",id:t.dataset.pay,preset:true};armed=false;say("");render();window.scrollTo(0,0);return}
   if(t.dataset&&t.dataset.edit){edit={k:t.dataset.edit,id:t.dataset.id};armed=false;say("");render();window.scrollTo(0,0);return}
   if(a==="canc"){edit=null;armed=false;render();return}
   if(a==="del"){
@@ -419,11 +417,11 @@ document.addEventListener("submit",e=>{
     if(!o.nombre||!(o.monto>0))return;
     run(sb.from("fin_fijos").insert(o));
   }
-  if(f==="fh")run(sb.from("fin_hipoteca_config").upsert({id:1,monto:parseFloat($("h-monto").value)||0,dia:Math.min(31,Math.max(1,parseInt($("h-dia").value)||1)),saldo:parseFloat($("h-saldo").value)||0,nota:$("h-nota").value.trim()||null})).then(ok=>{if(ok)say("Datos de la hipoteca guardados.")});
+  if(f==="fh")run(sb.from("fin_hipoteca_config").upsert({id:1,saldo:parseFloat($("h-saldo").value)||0,nota:$("h-nota").value.trim()||null})).then(ok=>{if(ok)say("Datos de la hipoteca guardados.")});
   if(f==="frp"){
     const mes=$("r-mes").value,fecha=$("r-fecha").value,monto=parseFloat($("r-monto").value);
     if(!mes||!fecha||!(monto>0))return;
-    run(sb.from("fin_hipoteca_pagos").insert({mes,fecha,monto})).then(ok=>{if(ok)say("Pago registrado.")});
+    run(sb.from("fin_hipoteca_pagos").insert({mes,fecha,monto,registrado_por:$("r-est").value==="pagado"?"owner":"pendiente"})).then(ok=>{if(ok)say("Pago guardado.")});
   }
   if(f==="fe"){
     const {k,id}=edit;let patch;
@@ -436,7 +434,8 @@ document.addEventListener("submit",e=>{
       patch={nombre:$("e-name").value.trim(),monto,tarjeta:$("e-tarj").value,dia:Math.min(31,Math.max(1,parseInt($("e-dia").value)||1)),tipo:$("e-tipo").value};
       if(!patch.nombre)return;
     }else{
-      patch={mes:$("e-mes").value,fecha:$("e-date").value,monto};
+      const row=D.pagos.find(x=>x.id===id);
+      patch={mes:$("e-mes").value,fecha:$("e-date").value,monto,registrado_por:$("e-est").value==="pagado"?(row&&row.registrado_por==="esposa"?"esposa":"owner"):"pendiente"};
     }
     run(sb.from(TABLA[k]).update(patch).eq("id",id)).then(ok=>{if(ok){edit=null;armed=false;render();say("Cambios guardados.")}});
   }
