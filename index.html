@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f7a5c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gastos">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Mis Gastos</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Space+Grotesk:wght@600&display=swap">
+<style>
+:root{--bg:#f5f6f4;--card:#fff;--fg:#1d2420;--mut:#66706a;--line:#e1e5e1;--acc:#1f7a5c;--bad:#c2410c;--ok:#1f7a5c;--onacc:#fff;
+--k1:#1f7a5c;--k2:#7c8794;--k3:#2563eb;--neg:#d97706;--comp:#be185d;--per:#6b7280;
+--sans:'Inter',system-ui,sans-serif;--head:'Space Grotesk','Inter',system-ui,sans-serif}
+@media (prefers-color-scheme:dark){:root{--bg:#121715;--card:#1b221f;--fg:#e8ede9;--mut:#93a09a;--line:#2b3430;--acc:#4cc59b;--bad:#fb923c;--ok:#4cc59b;--onacc:#0b1410;--k1:#4cc59b;--k2:#aab4bf;--k3:#60a5fa;--neg:#fbbf24;--comp:#f472b6;--per:#9ca3af;color-scheme:dark}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 var(--sans);padding-block:calc(16px + env(safe-area-inset-top,0px)) calc(40px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1,h2,h3{font-family:var(--head);margin:0;text-wrap:balance}
+h1{font-size:24px}h2{font-size:17px}h3{font-size:15px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+.month{display:flex;align-items:center;gap:8px}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;border:1px solid var(--line);background:var(--card);border-radius:8px;padding:10px 14px;min-height:42px}
+button:disabled{opacity:.5;cursor:default}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+button.pri{background:var(--acc);border-color:var(--acc);color:var(--onacc);font-weight:600}
+input,select{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;min-height:42px;font-size:16px}
+input[type=checkbox]{width:22px;height:22px;min-height:0;accent-color:var(--acc)}
+.tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
+.tabs button{white-space:nowrap}
+.tabs button[aria-selected=true]{background:var(--acc);border-color:var(--acc);color:var(--onacc);font-weight:600}
+.total{font:600 34px var(--head);font-variant-numeric:tabular-nums}
+.mut{color:var(--mut);font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.row{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+.num{font-variant-numeric:tabular-nums;font-weight:600}
+.kcard{border-left:4px solid var(--c)}
+.kcard .total{font-size:26px}
+form{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+form label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--mut);min-width:0}
+form .full{grid-column:1/-1}
+.item{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.item.s2{grid-template-columns:1fr auto auto}
+.item:first-child{border-top:0}
+.item .n{min-width:0;overflow-wrap:anywhere}
+.pill{display:inline-block;font-size:12px;padding:1px 8px;border-radius:99px;border:1px solid var(--c,var(--line));color:var(--c,var(--mut))}
+.x{border:0;background:none;color:var(--mut);padding:4px 10px}
+.empty{color:var(--mut);padding:8px 0}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--bad);font-weight:600}
+.split{display:flex;height:10px;border-radius:6px;overflow:hidden;background:var(--line);margin-top:8px}
+.split i{display:block;height:100%}
+.msg{padding:10px 12px;border-radius:8px;background:var(--card);border:1px solid var(--line)}
+.msg.err{border-color:var(--bad);color:var(--bad)}
+.login{max-width:380px;margin:8vh auto 0}
+[hidden]{display:none!important}
+@media (max-width:420px){.total{font-size:30px}}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="mut">Cargando…</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL="https://zigunlwprvsemfbbyuin.supabase.co";
+const SUPABASE_KEY="sb_publishable_J8LmvAsVEy6Tn99G3zto2g_xDbX_qgL";
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+
+const TARJ=[["AMEX Verde","--k1"],["AMEX Platinum","--k2"],["BBVA Platinum","--k3"]];
+const TN=TARJ.map(t=>[t[0],t[0]]),TNE=[...TN,["Efectivo","Efectivo"]];
+const TIPOS=[["negocio","Negocio","--neg"],["compartido","Compartido con esposa","--comp"],["personal","Personal","--per"]];
+const $=id=>document.getElementById(id);
+const fmt=n=>"$"+Number(n||0).toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:2});
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pad=n=>String(n).padStart(2,"0");
+const ymd=d=>d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+const dmy=s=>s.split("-").reverse().join("/");
+const tcol=t=>(TARJ.find(x=>x[0]===t)||["","--per"])[1];
+const topt=(arr,sel)=>arr.map(x=>`<option value="${esc(x[0])}"${x[0]===sel?" selected":""}>${esc(x[1])}</option>`).join("");
+let rol=null,tab="",fTarj="",cur=new Date(),D={gastos:[],fijos:[],pagos:[],hip:{},invit:[]},note="",noteErr=false;
+cur.setDate(1);
+const ym=()=>cur.getFullYear()+"-"+pad(cur.getMonth()+1);
+const monthDays=()=>new Date(cur.getFullYear(),cur.getMonth()+1,0).getDate();
+const owner=()=>rol==="owner";
+const mesG=()=>D.gastos.filter(g=>g.fecha&&g.fecha.startsWith(ym()));
+const pctDueno=g=>g.pct==null?50:Number(g.pct);
+const miParte=g=>g.tipo==="compartido"?g.monto*pctDueno(g)/100:g.monto;
+const sum=a=>a.reduce((s,g)=>s+Number(g.monto),0);
+const say=(m,err)=>{note=m;noteErr=!!err;const n=$("note");if(n){n.textContent=m;n.className="msg"+(err?" err":"");n.hidden=!m}};
+const dbErr=e=>say("No se pudo completar: "+(e&&e.message||"error de conexión"),true);
+
+/* ---------- sesión ---------- */
+async function boot(){
+  const {data:{session}}=await sb.auth.getSession();
+  if(!session)return pantallaLogin();
+  const {data,error}=await sb.rpc("fin_reclamar");
+  if(error){return pantallaLogin("No se pudo verificar tu acceso: "+error.message)}
+  if(!data)return pantallaSinAcceso(session.user.email);
+  rol=data;tab=owner()?"resumen":"gastos";
+  await cargar();shell();
+}
+function pantallaLogin(m){
+  $("app").innerHTML=`<div class="login card"><h1 style="margin-bottom:4px">Mis Gastos</h1><div class="mut" style="margin-bottom:14px">Entra con tu correo y contraseña.</div>
+  <form id="fl"><label class="full">Correo<input id="l-mail" type="email" autocomplete="email" required></label>
+  <label class="full">Contraseña<input id="l-pass" type="password" autocomplete="current-password" minlength="6" required></label>
+  <button class="pri full" type="submit" id="l-in">Entrar</button>
+  <button class="full" type="button" id="l-up">Crear cuenta</button></form>
+  <div id="note" class="msg ${m?"err":""}" style="margin-top:12px" ${m?"":"hidden"}>${esc(m||"")}</div>
+  <div class="mut" style="margin-top:12px">Si eres la esposa: primero pide que te inviten con tu correo y luego usa "Crear cuenta".</div></div>`;
+  $("fl").onsubmit=async e=>{e.preventDefault();$("l-in").disabled=true;
+    const {error}=await sb.auth.signInWithPassword({email:$("l-mail").value.trim(),password:$("l-pass").value});
+    if(error){$("l-in").disabled=false;say(error.message==="Invalid login credentials"?"Correo o contraseña incorrectos.":error.message,true)}else boot()};
+  $("l-up").onclick=async()=>{const email=$("l-mail").value.trim(),password=$("l-pass").value;
+    if(!email||password.length<6)return say("Escribe tu correo y una contraseña de al menos 6 caracteres.",true);
+    const {data,error}=await sb.auth.signUp({email,password});
+    if(error)return say(error.message,true);
+    if(data.session)boot();else say("Cuenta creada. Revisa tu correo para confirmarla y luego entra.")};
+}
+function pantallaSinAcceso(mail){
+  $("app").innerHTML=`<div class="login card"><h2>Tu cuenta aún no tiene acceso</h2>
+  <p class="mut">Entraste como <b>${esc(mail)}</b>. Pide al dueño de la app que agregue este correo en la pestaña Acceso y vuelve a entrar.</p>
+  <button id="out" class="full">Salir</button></div>`;
+  $("out").onclick=async()=>{await sb.auth.signOut();boot()};
+}
+
+/* ---------- datos ---------- */
+async function cargar(){
+  const q=[sb.from("fin_gastos").select("*").order("fecha",{ascending:false}).order("creado",{ascending:false}),
+           sb.from("fin_hipoteca_pagos").select("*"),sb.from("fin_hipoteca_config").select("*").eq("id",1).maybeSingle()];
+  if(owner()){q.push(sb.from("fin_fijos").select("*").order("creado"),sb.from("fin_invitados").select("*"))}
+  const r=await Promise.all(q);
+  const bad=r.find(x=>x.error);if(bad)return dbErr(bad.error);
+  D.gastos=(r[0].data||[]).map(g=>({...g,monto:Number(g.monto),fijoId:g.fijo_id}));
+  D.pagos=(r[1].data||[]).map(p=>({...p,monto:Number(p.monto)}));
+  D.hip=r[2].data||{};
+  if(owner()){D.fijos=(r[3].data||[]).map(f=>({...f,monto:Number(f.monto)}));D.invit=r[4].data||[]}
+}
+async function run(p){const {error}=await p;if(error)return dbErr(error);say("");await cargar();render()}
+
+/* ---------- vistas ---------- */
+function vResumen(){
+  const all=mesG(),m=all.filter(g=>g.tarjeta!=="Efectivo"),cashL=all.filter(g=>g.tarjeta==="Efectivo"),tot=sum(m);
+  const deudas=D.gastos.filter(g=>g.tarjeta==="Efectivo"&&g.deuda&&!g.saldada);
+  const porTipo=t=>m.filter(g=>g.tipo===t);
+  const comp=porTipo("compartido"),compTot=sum(comp),compMia=comp.reduce((s,g)=>s+miParte(g),0);
+  const neg=sum(porTipo("negocio")),per=sum(m.filter(g=>g.tipo==="personal"));
+  const cot=m.filter(g=>g.cotejado).length;
+  const kc=TARJ.map(([t,c])=>{
+    const gt=m.filter(g=>g.tarjeta===t),fxTot=D.fijos.filter(f=>f.tarjeta===t).reduce((s,f)=>s+f.monto,0);
+    return `<div class="card kcard" style="--c:var(${c})"><h3>${t}</h3><div class="total">${fmt(sum(gt))}</div>
+    <div class="mut">${gt.length} cargos · ${gt.filter(g=>g.cotejado).length} cotejados</div>
+    <div class="mut">Fijos al mes: <b>${fmt(fxTot)}</b></div></div>`}).join("");
+  const sin=m.filter(g=>!TARJ.some(x=>x[0]===g.tarjeta));
+  const dEsp=comp.filter(g=>g.por==="esposa");
+  const w=v=>tot?(v/tot*100):0;
+  return `<div class="card"><div class="mut">Total en tarjetas este mes</div><div class="total">${fmt(tot)}</div>
+   <div class="split"><i style="width:${w(neg)}%;background:var(--neg)"></i><i style="width:${w(compTot)}%;background:var(--comp)"></i><i style="width:${w(per)}%;background:var(--per)"></i></div>
+   <div class="row" style="margin-top:10px"><span class="mut">Cotejados con estado de cuenta: ${cot} de ${m.length}</span>${sin.length?`<span class="warn">${sin.length} sin tarjeta</span>`:""}</div></div>
+   <div class="grid">${kc}</div>
+   <div class="grid">
+    <div class="card"><span class="pill" style="--c:var(--neg)">Negocio</span><div class="total" style="font-size:24px;margin-top:6px">${fmt(neg)}</div></div>
+    <div class="card"><span class="pill" style="--c:var(--comp)">Compartido</span><div class="total" style="font-size:24px;margin-top:6px">${fmt(compTot)}</div><div class="mut">Tu parte <b>${fmt(compMia)}</b> · Esposa <b>${fmt(compTot-compMia)}</b></div><div class="mut">${dEsp.length} capturados por tu esposa (${fmt(sum(dEsp))})</div></div>
+    <div class="card"><span class="pill" style="--c:var(--per)">Personal</span><div class="total" style="font-size:24px;margin-top:6px">${fmt(per)}</div></div>
+   </div>
+   <div class="card"><div class="row"><h3>Efectivo este mes</h3><span class="num">${fmt(sum(cashL))}</span></div><div class="mut">${cashL.length} gastos, no entran al cotejo del estado de cuenta</div></div>
+   <div class="card"><h3>Deudas pendientes</h3>${deudas.length?deudas.map(g=>`<div class="item s2"><div class="n">${esc(g.nota||"Sin concepto")}<div class="mut">Pagó ${esc(g.quien||"Yo")} · se le debe a <b>${esc(g.deuda)}</b> · ${dmy(g.fecha)}</div></div><span class="num">${fmt(g.monto)}</span><button data-act="saldar" data-id="${esc(g.id)}">Saldar</button></div>`).join(""):'<div class="empty">No hay deudas pendientes.</div>'}</div>
+   <div class="card"><div class="row"><h3>Crédito hipotecario</h3>${hipoEstado()}</div></div>`;
+}
+function hipoEstado(){
+  const h=D.hip,pag=D.pagos.find(p=>p.mes===ym());
+  if(!h.monto)return '<span class="mut">Sin configurar.</span>';
+  const dia=Math.min(h.dia||1,monthDays());
+  return pag?`<span class="ok">Pagada el ${dmy(pag.fecha)} · ${fmt(pag.monto)}</span>`:`<span class="warn">Pendiente: ${fmt(h.monto)} el ${pad(dia)}/${pad(cur.getMonth()+1)}</span>`;
+}
+
+function formGasto(){
+  const o=owner();
+  return `<section class="card"><h2 style="margin-bottom:12px">${o?"Nuevo gasto":"Nuevo gasto compartido"}</h2>
+   <form id="fg"><label>Monto<input id="g-amt" type="number" min="0.01" step="any" inputmode="decimal" required placeholder="0,00"></label>
+   <label>${o?"Tarjeta o efectivo":"Tarjeta"}<select id="g-tarj">${topt(o?TNE:TN)}</select></label>
+   <label>Fecha<input id="g-date" type="date" required value="${ymd(new Date())}"></label>
+   ${o?`<label>Tipo<select id="g-tipo">${topt(TIPOS.map(t=>[t[0],t[1]]))}</select></label>`:""}
+   <label id="g-pctl" ${o?"hidden":""}>${o?"% que pagas tú":"% que paga tu esposo"}<input id="g-pct" type="number" min="0" max="100" step="any" value="50"></label>
+   ${o?`<label class="efe" hidden>Quién pagó<select id="g-quien"><option>Yo</option><option>Esposa</option><option>Otro</option></select></label>
+   <label class="efe" hidden>A quién se le debe (opcional)<input id="g-deuda" maxlength="40" placeholder="Ej. Esposa, Juan"></label>`:""}
+   <label class="full">Concepto<input id="g-note" type="text" maxlength="80" placeholder="Ej. súper, gasolina, hosting"></label>
+   <button class="pri full" type="submit">Agregar gasto</button></form></section>`;
+}
+function vGastos(){
+  const o=owner();
+  const m=mesG().filter(g=>(o||g.tipo==="compartido")&&(!fTarj||g.tarjeta===fTarj));
+  const items=m.length?m.map(g=>{const t=TIPOS.find(x=>x[0]===g.tipo)||TIPOS[2],efe=g.tarjeta==="Efectivo";
+    const extra=g.tipo==="compartido"?(o?` · tu parte ${fmt(miParte(g))}`:` · tu parte ${fmt(g.monto*(100-pctDueno(g))/100)}`):"";
+    const ex=efe?` · pagó ${esc(g.quien||"Yo")}${g.deuda?` · se debe a ${esc(g.deuda)}${g.saldada?" (saldado)":""}`:""}`:"";
+    const quien=g.por==="esposa"?(o?" · capturó esposa":" · capturaste tú"):(o?"":" · capturó tu esposo");
+    const mine=o||g.user_id===me;
+    return `<div class="item">${(efe||!o)?"<span></span>":`<input type="checkbox" data-act="cot" data-id="${esc(g.id)}" ${g.cotejado?"checked":""} aria-label="Cotejado con estado de cuenta">`}
+    <div class="n"><div>${esc(g.nota||"Sin nota")}${g.fijoId?' <span class="mut">(fijo)</span>':""}</div>
+    <div class="mut"><span style="color:var(${tcol(g.tarjeta)})">●</span> ${esc(g.tarjeta)} · ${dmy(g.fecha)} · <span class="pill" style="--c:var(${t[2]})">${t[1]}</span>${extra}${ex}${quien}</div></div>
+    <span class="num">${fmt(g.monto)}</span>${mine?`<button class="x" data-act="delg" data-id="${esc(g.id)}" aria-label="Eliminar">✕</button>`:"<span></span>"}</div>`}).join(""):'<div class="empty">No hay gastos en este mes. Agrega el primero arriba.</div>';
+  const tot=sum(m);
+  return `${formGasto()}
+   <section class="card"><div class="row" style="margin-bottom:6px"><h2>Movimientos · ${fmt(tot)}</h2>
+   <select id="g-filtro" style="width:auto"><option value="">Todas</option>${topt(o?TNE:TN,fTarj)}</select></div>
+   ${o?'<div class="mut" style="margin-bottom:4px">Marca la casilla cuando el cargo ya coincide con tu estado de cuenta.</div>':""}${items}</section>`;
+}
+function vFijos(){
+  const k=ym(),porT=TARJ.map(([t,c])=>{
+    const fx=D.fijos.filter(f=>f.tarjeta===t);
+    const body=fx.length?fx.map(f=>{const reg=D.gastos.some(g=>g.fijoId===f.id&&g.fecha.startsWith(k));
+      return `<div class="item s2"><div class="n">${esc(f.nombre)}<div class="mut">Día ${f.dia} · ${(TIPOS.find(x=>x[0]===f.tipo)||TIPOS[2])[1]} · ${reg?'<span class="ok">registrado este mes</span>':"sin registrar este mes"}</div></div>
+      <span class="num">${fmt(f.monto)}</span><button class="x" data-act="delf" data-id="${esc(f.id)}" aria-label="Eliminar">✕</button></div>`}).join(""):'<div class="empty">Sin cargos fijos.</div>';
+    return `<section class="card kcard" style="--c:var(${c})"><div class="row"><h3>${t}</h3><span class="num">${fmt(fx.reduce((s,f)=>s+f.monto,0))} / mes</span></div>${body}</section>`}).join("");
+  const pend=D.fijos.filter(f=>!D.gastos.some(g=>g.fijoId===f.id&&g.fecha.startsWith(k))).length;
+  return `<section class="card"><h2 style="margin-bottom:12px">Nuevo cargo fijo</h2>
+   <form id="ff"><label>Nombre<input id="f-name" required maxlength="40" placeholder="Netflix, Spotify, Celular"></label>
+   <label>Monto<input id="f-amt" type="number" min="0.01" step="any" inputmode="decimal" required></label>
+   <label>Tarjeta<select id="f-tarj">${topt(TN)}</select></label>
+   <label>Día de cobro<input id="f-dia" type="number" min="1" max="31" required value="1"></label>
+   <label>Tipo<select id="f-tipo">${topt(TIPOS.map(t=>[t[0],t[1]]))}</select></label>
+   <button class="pri full" type="submit">Agregar cargo fijo</button></form></section>
+   <section class="card"><div class="row"><div><div class="mut">Total fijo al mes</div><div class="total" style="font-size:26px">${fmt(D.fijos.reduce((s,f)=>s+f.monto,0))}</div></div>
+   <button id="regfijos" class="pri" ${pend?"":"disabled"}>${pend?`Registrar ${pend} fijos de este mes`:"Fijos de este mes registrados"}</button></div></section>${porT}`;
+}
+function vHipoteca(){
+  const h=D.hip,pag=D.pagos.find(p=>p.mes===ym()),o=owner();
+  const lista=[...D.pagos].sort((a,b)=>b.mes.localeCompare(a.mes)).map(p=>`<div class="item s2"><div class="n">${esc(p.mes)}<div class="mut">Pagado el ${dmy(p.fecha)}${p.registrado_por==="esposa"?" · registró esposa":""}</div></div><span class="num">${fmt(p.monto)}</span>${o?`<button class="x" data-act="delp" data-id="${esc(p.id)}" aria-label="Eliminar">✕</button>`:"<span></span>"}</div>`).join("")||'<div class="empty">Aún no hay pagos registrados.</div>';
+  const totPag=D.pagos.reduce((s,p)=>s+p.monto,0);
+  return `<section class="card"><h2 style="margin-bottom:12px">Crédito hipotecario</h2>
+   ${o?`<form id="fh"><label>Pago mensual<input id="h-monto" type="number" min="0" step="any" inputmode="decimal" value="${h.monto||""}"></label>
+   <label>Día de pago<input id="h-dia" type="number" min="1" max="31" value="${h.dia||""}"></label>
+   <label>Saldo pendiente (opcional)<input id="h-saldo" type="number" min="0" step="any" inputmode="decimal" value="${h.saldo||""}"></label>
+   <label>Banco o referencia<input id="h-nota" maxlength="40" value="${esc(h.nota||"")}"></label>
+   <button class="pri full" type="submit">Guardar datos</button></form>`:
+   `<div class="row"><span>Pago mensual</span><b class="num">${fmt(h.monto)}</b></div><div class="row"><span>Día de pago</span><b>${h.dia||"—"}</b></div>${h.nota?`<div class="mut">${esc(h.nota)}</div>`:""}`}</section>
+   <section class="card"><div class="row"><div><div class="mut">Este mes</div>${hipoEstado()}</div>
+   <button id="regpago" class="pri" ${pag||!h.monto?"disabled":""}>Registrar pago de este mes</button></div>
+   ${h.saldo?`<div class="mut" style="margin-top:8px">Saldo pendiente: <b>${fmt(Math.max(0,h.saldo-totPag))}</b></div>`:""}</section>
+   <section class="card"><h3>Pagos registrados</h3>${lista}</section>`;
+}
+function vAcceso(){
+  const esp=D.invit[0];
+  return `<section class="card"><h2 style="margin-bottom:6px">Acceso de tu esposa</h2>
+  <p class="mut" style="margin-top:0">Ella solo ve y captura gastos compartidos y ve la hipoteca. No ve tus gastos de negocio ni personales. Escribe su correo, y luego ella abre la app y toca "Crear cuenta" con ese mismo correo.</p>
+  ${esp?`<div class="row"><span>Invitada: <b>${esc(esp.email)}</b></span><button data-act="deli" data-id="${esc(esp.email)}">Quitar invitación</button></div>`:
+  `<form id="fi"><label class="full">Correo de tu esposa<input id="i-mail" type="email" required></label><button class="pri full" type="submit">Invitar</button></form>`}
+  </section><section class="card"><button id="out" class="full">Cerrar sesión</button></section>`;
+}
+let me=null;
+const TABS_O=[["resumen","Resumen"],["gastos","Gastos"],["fijos","Fijos"],["hipoteca","Hipoteca"],["acceso","Acceso"]];
+const TABS_E=[["gastos","Compartidos"],["hipoteca","Hipoteca"],["salir","Salir"]];
+async function shell(){
+  me=(await sb.auth.getUser()).data.user.id;
+  $("app").innerHTML=`<div class="top"><h1>Mis Gastos</h1><div class="month"><button id="prev" aria-label="Mes anterior">‹</button><strong id="mlabel" style="min-width:120px;text-align:center"></strong><button id="next" aria-label="Mes siguiente">›</button></div></div>
+  <div class="tabs" id="tabs" role="tablist"></div><div id="note" class="msg" hidden></div><div id="view"></div>`;
+  $("tabs").innerHTML=(owner()?TABS_O:TABS_E).map(([k,l])=>`<button role="tab" data-tab="${k}">${l}</button>`).join("");
+  $("tabs").onclick=async e=>{const t=e.target.dataset.tab;if(!t)return;if(t==="salir"){await sb.auth.signOut();return boot()}tab=t;render()};
+  $("prev").onclick=()=>{cur.setMonth(cur.getMonth()-1);render()};
+  $("next").onclick=()=>{cur.setMonth(cur.getMonth()+1);render()};
+  render();
+}
+function render(){
+  if(!$("view"))return;
+  $("mlabel").textContent=cur.toLocaleDateString("es-MX",{month:"long",year:"numeric"});
+  document.querySelectorAll("#tabs button").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
+  const ae=document.activeElement,typing=ae&&/INPUT|SELECT/.test(ae.tagName)&&ae.type!=="checkbox"&&ae.closest("form");
+  if(typing)return;
+  const v={resumen:vResumen,gastos:vGastos,fijos:vFijos,hipoteca:vHipoteca,acceso:vAcceso}[tab];
+  $("view").innerHTML=v?v():"";
+  if(tab==="acceso"&&$("out"))$("out").onclick=async()=>{await sb.auth.signOut();boot()};
+}
+
+/* ---------- eventos ---------- */
+document.addEventListener("change",e=>{
+  const t=e.target;
+  if(t.id==="g-tipo")$("g-pctl").hidden=t.value!=="compartido";
+  if(t.id==="g-tarj")document.querySelectorAll(".efe").forEach(l=>l.hidden=t.value!=="Efectivo");
+  if(t.id==="g-filtro"){fTarj=t.value;render()}
+  if(t.dataset&&t.dataset.act==="cot")run(sb.from("fin_gastos").update({cotejado:t.checked}).eq("id",t.dataset.id));
+});
+document.addEventListener("click",e=>{
+  const t=e.target,a=t.dataset&&t.dataset.act;
+  if(a==="delg")run(sb.from("fin_gastos").delete().eq("id",t.dataset.id));
+  if(a==="delf")run(sb.from("fin_fijos").delete().eq("id",t.dataset.id));
+  if(a==="delp")run(sb.from("fin_hipoteca_pagos").delete().eq("id",t.dataset.id));
+  if(a==="saldar")run(sb.from("fin_gastos").update({saldada:true}).eq("id",t.dataset.id));
+  if(a==="deli")run(sb.from("fin_invitados").delete().eq("email",t.dataset.id));
+  if(t.id==="regfijos"){const k=ym();
+    const rows=D.fijos.filter(f=>!D.gastos.some(g=>g.fijo_id===f.id&&g.fecha.startsWith(k))).map(f=>({monto:f.monto,tarjeta:f.tarjeta,tipo:f.tipo,nota:f.nombre,fijo_id:f.id,fecha:k+"-"+pad(Math.min(f.dia,monthDays())),pct:f.tipo==="compartido"?50:null}));
+    if(rows.length)run(sb.from("fin_gastos").insert(rows))}
+  if(t.id==="regpago")run(sb.from("fin_hipoteca_pagos").insert({mes:ym(),monto:D.hip.monto,fecha:ym()+"-"+pad(Math.min(D.hip.dia||1,monthDays()))}));
+});
+document.addEventListener("submit",e=>{
+  e.preventDefault();const f=e.target.id;
+  if(f==="fg"){
+    const o=owner(),tarjeta=$("g-tarj").value,tipo=o?$("g-tipo").value:"compartido";
+    const g={monto:parseFloat($("g-amt").value),tarjeta,fecha:$("g-date").value,tipo,nota:$("g-note").value.trim()||null};
+    if(!(g.monto>0))return;
+    if(tipo==="compartido")g.pct=Math.min(100,Math.max(0,parseFloat($("g-pct").value)||50));
+    if(tarjeta==="Efectivo"){g.quien=$("g-quien").value;g.deuda=$("g-deuda").value.trim()||null;g.cotejado=false}
+    run(sb.from("fin_gastos").insert(g)).then(()=>{if($("g-amt")){$("g-amt").value="";$("g-note").value="";$("g-amt").focus()}});
+  }
+  if(f==="ff"){
+    const o={nombre:$("f-name").value.trim(),monto:parseFloat($("f-amt").value),tarjeta:$("f-tarj").value,dia:Math.min(31,Math.max(1,parseInt($("f-dia").value)||1)),tipo:$("f-tipo").value};
+    if(!o.nombre||!(o.monto>0))return;
+    run(sb.from("fin_fijos").insert(o));
+  }
+  if(f==="fh")run(sb.from("fin_hipoteca_config").upsert({id:1,monto:parseFloat($("h-monto").value)||0,dia:Math.min(31,Math.max(1,parseInt($("h-dia").value)||1)),saldo:parseFloat($("h-saldo").value)||0,nota:$("h-nota").value.trim()||null})).then(()=>say("Datos de la hipoteca guardados."));
+  if(f==="fi")run(sb.from("fin_invitados").insert({email:$("i-mail").value.trim().toLowerCase()}));
+});
+sb.auth.onAuthStateChange(ev=>{if(ev==="SIGNED_OUT")boot()});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&rol)cargar().then(render)});
+boot();
+</script>
+</body>
+</html>
