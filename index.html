@@ -58,6 +58,9 @@ form .full{grid-column:1/-1}
 .split i{display:block;height:100%}
 .msg{padding:10px 12px;border-radius:8px;background:var(--card);border:1px solid var(--line)}
 .msg.err{border-color:var(--bad);color:var(--bad)}
+.tri{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.tri div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.tri b{font-size:15px;overflow-wrap:anywhere}
 .login{max-width:380px;margin:8vh auto 0}
 [hidden]{display:none!important}
 @media (max-width:420px){.total{font-size:30px}}
@@ -89,7 +92,12 @@ cur.setDate(1);
 const ym=()=>cur.getFullYear()+"-"+pad(cur.getMonth()+1);
 const monthDays=()=>new Date(cur.getFullYear(),cur.getMonth()+1,0).getDate();
 const owner=()=>rol==="owner";
-const mesG=()=>D.gastos.filter(g=>g.fecha&&g.fecha.startsWith(ym()));
+function fijosVirtuales(){
+  const k=ym();
+  return D.fijos.filter(f=>(f.creado||"").slice(0,7)<=k&&!D.gastos.some(g=>g.fijoId===f.id&&g.fecha&&g.fecha.startsWith(k)))
+    .map(f=>({id:"fx-"+f.id,virtual:true,fijoId:f.id,monto:f.monto,tarjeta:f.tarjeta,tipo:f.tipo,pct:f.tipo==="compartido"?50:null,nota:f.nombre,cotejado:false,por:"owner",fecha:k+"-"+pad(Math.min(f.dia,monthDays()))}));
+}
+const mesG=()=>[...D.gastos.filter(g=>g.fecha&&g.fecha.startsWith(ym())),...fijosVirtuales()];
 const pctDueno=g=>g.pct==null?50:Number(g.pct);
 const miParte=g=>g.tipo==="compartido"?g.monto*pctDueno(g)/100:g.monto;
 const sum=a=>a.reduce((s,g)=>s+Number(g.monto),0);
@@ -165,20 +173,27 @@ function vResumen(){
   const hoyL=efe.filter(g=>g.fecha===hoy);
   const mesE=efe.filter(g=>g.fecha&&g.fecha.startsWith(k));
   const deudas=efe.filter(g=>g.deuda&&!g.saldada);
-  const fxPend=D.fijos.filter(f=>!D.gastos.some(g=>g.fijoId===f.id&&g.fecha.startsWith(k)));
   const hipPend=D.hip.monto&&!D.pagos.some(p=>p.mes===k);
   const fila=g=>`<div class="item s2"><div class="n">${esc(g.nota||"Sin concepto")}<div class="mut">Pagó ${esc(g.quien||"Yo")}${g.deuda?` · se le debe a <b>${esc(g.deuda)}</b>${g.saldada?" (saldado)":""}`:""} · ${dmy(g.fecha)}</div></div><span class="num">${fmt(g.monto)}</span>${g.deuda&&!g.saldada?`<button data-act="saldar" data-id="${esc(g.id)}">Saldar</button>`:"<span></span>"}</div>`;
-  const nPend=deudas.length+(hipPend?1:0)+(fxPend.length?1:0);
+  const nPend=deudas.length+(hipPend?1:0);
   const fecha=new Date().toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long"});
-  return `<div class="card"><div class="mut" style="text-transform:capitalize">${fecha}</div>
+  const mesAll=mesG().filter(g=>TARJ.some(x=>x[0]===g.tarjeta));
+  const corte=TARJ.map(([t,c])=>{
+    const L=mesAll.filter(g=>g.tarjeta===t),tot=sum(L);
+    const neg=sum(L.filter(g=>g.tipo==="negocio")),compL=L.filter(g=>g.tipo==="compartido");
+    const compMio=compL.reduce((s,g)=>s+miParte(g),0),compEsp=sum(compL)-compMio;
+    const mio=tot-neg-sum(compL)+compMio;
+    return `<div class="card kcard" style="--c:var(${c})"><div class="row"><h3>${t}</h3><span class="num">${fmt(tot)}</span></div>
+     <div class="tri"><div><span class="mut">Mío</span><b class="num">${fmt(mio)}</b></div><div><span class="mut">Esposa</span><b class="num">${fmt(compEsp)}</b></div><div><span class="mut">Negocio</span><b class="num">${fmt(neg)}</b></div></div></div>`}).join("");
+  return `<div class="card"><div class="mut">${fecha.charAt(0).toUpperCase()+fecha.slice(1)}</div>
    <div class="mut" style="margin-top:6px">Efectivo gastado hoy</div><div class="total">${fmt(sum(hoyL))}</div>
-   <div class="mut">${hoyL.length} gastos hoy · este mes en efectivo: <b>${fmt(sum(mesE))}</b></div></div>
+   <div class="mut">${hoyL.length} ${hoyL.length===1?"gasto":"gastos"} hoy · este mes en efectivo: <b>${fmt(sum(mesE))}</b></div></div>
    <div class="card"><h2 style="margin-bottom:4px">Efectivo de hoy</h2>${hoyL.length?hoyL.map(fila).join(""):'<div class="empty">Hoy no has capturado gastos en efectivo.</div>'}</div>
+   <h2 style="margin-top:4px">Corte de tarjetas</h2><div class="grid">${corte}</div>
    <div class="card"><div class="row" style="margin-bottom:4px"><h2>Pendiente</h2><span class="${nPend?"warn":"ok"}">${nPend?nPend+(nPend===1?" pendiente":" pendientes"):"Todo al día"}</span></div>
    ${deudas.map(fila).join("")}
    ${hipPend?`<div class="item s2"><div class="n">Hipoteca de este mes<div class="mut">${hipoEstado().replace(/<[^>]+>/g,"")}</div></div><span class="num">${fmt(D.hip.monto)}</span><button data-go="hipoteca">Abrir</button></div>`:""}
-   ${fxPend.length?`<div class="item s2"><div class="n">Cargos fijos sin registrar este mes<div class="mut">${fxPend.length} por registrar · ${fmt(fxPend.reduce((t,f)=>t+f.monto,0))}</div></div><span></span><button data-go="fijos">Abrir</button></div>`:""}
-   ${nPend?"":'<div class="empty">No hay deudas, pagos ni fijos pendientes.</div>'}</div>`;
+   ${nPend?"":'<div class="empty">No hay deudas ni pagos pendientes.</div>'}</div>`;
 }
 function hipoEstado(){
   const h=D.hip,pag=D.pagos.find(p=>p.mes===ym());
@@ -202,7 +217,7 @@ function formGasto(){
 }
 function vGastos(){
   const o=owner();
-  const m=mesG().filter(g=>(o||g.tipo==="compartido")&&(!fTarj||g.tarjeta===fTarj));
+  const m=mesG().filter(g=>(o||g.tipo==="compartido")&&(!fTarj||g.tarjeta===fTarj)).sort((a,b)=>b.fecha.localeCompare(a.fecha));
   const items=m.length?m.map(g=>{const t=TIPOS.find(x=>x[0]===g.tipo)||TIPOS[2],efe=g.tarjeta==="Efectivo";
     const extra=g.tipo==="compartido"?(o?` · tu parte ${fmt(miParte(g))}`:` · tu parte ${fmt(g.monto*(100-pctDueno(g))/100)}`):"";
     const ex=efe?` · pagó ${esc(g.quien||"Yo")}${g.deuda?` · se debe a ${esc(g.deuda)}${g.saldada?" (saldado)":""}`:""}`:"";
@@ -211,7 +226,7 @@ function vGastos(){
     return `<div class="item">${(efe||!o)?"<span></span>":`<input type="checkbox" data-act="cot" data-id="${esc(g.id)}" ${g.cotejado?"checked":""} aria-label="Cotejado con estado de cuenta">`}
     <div class="n"><div>${esc(g.nota||"Sin nota")}${g.fijoId?' <span class="mut">(fijo)</span>':""}</div>
     <div class="mut"><span style="color:var(${tcol(g.tarjeta)})">●</span> ${esc(g.tarjeta)} · ${dmy(g.fecha)} · <span class="pill" style="--c:var(${t[2]})">${t[1]}</span>${extra}${ex}${quien}</div></div>
-    <span class="num">${fmt(g.monto)}</span>${mine?`<button class="x" data-act="delg" data-id="${esc(g.id)}" aria-label="Eliminar">✕</button>`:"<span></span>"}</div>`}).join(""):'<div class="empty">No hay gastos en este mes. Agrega el primero arriba.</div>';
+    <span class="num">${fmt(g.monto)}</span>${mine&&!g.virtual?`<button class="x" data-act="delg" data-id="${esc(g.id)}" aria-label="Eliminar">✕</button>`:"<span></span>"}</div>`}).join(""):'<div class="empty">No hay gastos en este mes. Agrega el primero arriba.</div>';
   const tot=sum(m);
   return `${formGasto()}
    <section class="card"><div class="row" style="margin-bottom:6px"><h2>Movimientos · ${fmt(tot)}</h2>
@@ -219,13 +234,10 @@ function vGastos(){
    ${o?'<div class="mut" style="margin-bottom:4px">Marca la casilla cuando el cargo ya coincide con tu estado de cuenta.</div>':""}${items}</section>`;
 }
 function vFijos(){
-  const k=ym(),porT=TARJ.map(([t,c])=>{
+  const porT=TARJ.map(([t,c])=>{
     const fx=D.fijos.filter(f=>f.tarjeta===t);
-    const body=fx.length?fx.map(f=>{const reg=D.gastos.some(g=>g.fijoId===f.id&&g.fecha.startsWith(k));
-      return `<div class="item s2"><div class="n">${esc(f.nombre)}<div class="mut">Día ${f.dia} · ${(TIPOS.find(x=>x[0]===f.tipo)||TIPOS[2])[1]} · ${reg?'<span class="ok">registrado este mes</span>':"sin registrar este mes"}</div></div>
-      <span class="num">${fmt(f.monto)}</span><button class="x" data-act="delf" data-id="${esc(f.id)}" aria-label="Eliminar">✕</button></div>`}).join(""):'<div class="empty">Sin cargos fijos.</div>';
+    const body=fx.length?fx.map(f=>`<div class="item s2"><div class="n">${esc(f.nombre)}<div class="mut">Se cobra el día ${f.dia} · ${(TIPOS.find(x=>x[0]===f.tipo)||TIPOS[2])[1]}</div></div><span class="num">${fmt(f.monto)}</span><button class="x" data-act="delf" data-id="${esc(f.id)}" aria-label="Eliminar">✕</button></div>`).join(""):'<div class="empty">Sin cargos fijos.</div>';
     return `<section class="card kcard" style="--c:var(${c})"><div class="row"><h3>${t}</h3><span class="num">${fmt(fx.reduce((s,f)=>s+f.monto,0))} / mes</span></div>${body}</section>`}).join("");
-  const pend=D.fijos.filter(f=>!D.gastos.some(g=>g.fijoId===f.id&&g.fecha.startsWith(k))).length;
   return `<section class="card"><h2 style="margin-bottom:12px">Nuevo cargo fijo</h2>
    <form id="ff"><label>Nombre<input id="f-name" required maxlength="40" placeholder="Netflix, Spotify, Celular"></label>
    <label>Monto<input id="f-amt" type="number" min="0.01" step="any" inputmode="decimal" required></label>
@@ -233,8 +245,8 @@ function vFijos(){
    <label>Día de cobro<input id="f-dia" type="number" min="1" max="31" required value="1"></label>
    <label>Tipo<select id="f-tipo">${topt(TIPOS.map(t=>[t[0],t[1]]))}</select></label>
    <button class="pri full" type="submit">Agregar cargo fijo</button></form></section>
-   <section class="card"><div class="row"><div><div class="mut">Total fijo al mes</div><div class="total" style="font-size:26px">${fmt(D.fijos.reduce((s,f)=>s+f.monto,0))}</div></div>
-   <button id="regfijos" class="pri" ${pend?"":"disabled"}>${pend?`Registrar ${pend} fijos de este mes`:"Fijos de este mes registrados"}</button></div></section>${porT}`;
+   <section class="card"><div class="mut">Total fijo al mes</div><div class="total" style="font-size:26px">${fmt(D.fijos.reduce((s,f)=>s+f.monto,0))}</div>
+   <div class="mut" style="margin-top:6px">Los fijos se suman solos cada mes a su tarjeta. Para dejar de contarlos, bórralos de esta lista.</div></section>${porT}`;
 }
 function vHipoteca(){
   const h=D.hip,pag=D.pagos.find(p=>p.mes===ym()),o=owner();
@@ -295,7 +307,12 @@ document.addEventListener("change",e=>{
   if(t.id==="g-tipo")$("g-pctl").hidden=t.value!=="compartido";
   if(t.id==="g-tarj")document.querySelectorAll(".efe").forEach(l=>l.hidden=t.value!=="Efectivo");
   if(t.id==="g-filtro"){fTarj=t.value;render()}
-  if(t.dataset&&t.dataset.act==="cot")run(sb.from("fin_gastos").update({cotejado:t.checked}).eq("id",t.dataset.id));
+  if(t.dataset&&t.dataset.act==="cot"){
+    const id=t.dataset.id;
+    if(id.startsWith("fx-")){const g=mesG().find(x=>x.id===id);if(!g)return;
+      run(sb.from("fin_gastos").insert({monto:g.monto,tarjeta:g.tarjeta,tipo:g.tipo,pct:g.pct,nota:g.nota,fijo_id:g.fijoId,fecha:g.fecha,cotejado:true}))}
+    else run(sb.from("fin_gastos").update({cotejado:t.checked}).eq("id",id));
+  }
 });
 document.addEventListener("click",e=>{
   const t=e.target,a=t.dataset&&t.dataset.act;
