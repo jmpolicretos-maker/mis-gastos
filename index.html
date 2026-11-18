@@ -75,7 +75,7 @@ const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 
 const TARJ=[["AMEX Verde","--k1"],["AMEX Platinum","--k2"],["BBVA Platinum","--k3"]];
 const TN=TARJ.map(t=>[t[0],t[0]]),TNE=[...TN,["Efectivo","Efectivo"]];
-const TIPOS=[["negocio","Negocio","--neg"],["compartido","Compartido con esposa","--comp"],["personal","Personal","--per"]];
+const TIPOS=[["negocio","Negocio","--neg"],["compartido","Compartido","--comp"],["personal","Personal","--per"]];
 const $=id=>document.getElementById(id);
 const fmt=n=>"$"+Number(n||0).toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:2});
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -115,7 +115,7 @@ function pantallaLogin(m){
   <button class="full" type="button" id="l-up">Crear cuenta</button>
   <button class="full" type="button" id="l-forgot" style="border:0;background:none;color:var(--acc)">Olvidé mi contraseña</button></form>
   <div id="note" class="msg ${m?"err":""}" style="margin-top:12px" ${m?"":"hidden"}>${esc(m||"")}</div>
-  <div class="mut" style="margin-top:12px">Si eres la esposa: primero pide que te inviten con tu correo y luego usa "Crear cuenta".</div></div>`;
+  <div class="mut" style="margin-top:12px">Si te invitaron: usa el mismo correo con el que te invitaron y toca "Crear cuenta".</div></div>`;
   $("fl").onsubmit=async e=>{e.preventDefault();$("l-in").disabled=true;
     const {error}=await sb.auth.signInWithPassword({email:$("l-mail").value.trim(),password:$("l-pass").value});
     if(error){$("l-in").disabled=false;say(error.message==="Invalid login credentials"?"Correo o contraseña incorrectos.":error.message,true)}else boot()};
@@ -160,32 +160,25 @@ async function run(p){const {error}=await p;if(error)return dbErr(error);say("")
 
 /* ---------- vistas ---------- */
 function vResumen(){
-  const all=mesG(),m=all.filter(g=>g.tarjeta!=="Efectivo"),cashL=all.filter(g=>g.tarjeta==="Efectivo"),tot=sum(m);
-  const deudas=D.gastos.filter(g=>g.tarjeta==="Efectivo"&&g.deuda&&!g.saldada);
-  const porTipo=t=>m.filter(g=>g.tipo===t);
-  const comp=porTipo("compartido"),compTot=sum(comp),compMia=comp.reduce((s,g)=>s+miParte(g),0);
-  const neg=sum(porTipo("negocio")),per=sum(m.filter(g=>g.tipo==="personal"));
-  const cot=m.filter(g=>g.cotejado).length;
-  const kc=TARJ.map(([t,c])=>{
-    const gt=m.filter(g=>g.tarjeta===t),fxTot=D.fijos.filter(f=>f.tarjeta===t).reduce((s,f)=>s+f.monto,0);
-    return `<div class="card kcard" style="--c:var(${c})"><h3>${t}</h3><div class="total">${fmt(sum(gt))}</div>
-    <div class="mut">${gt.length} cargos · ${gt.filter(g=>g.cotejado).length} cotejados</div>
-    <div class="mut">Fijos al mes: <b>${fmt(fxTot)}</b></div></div>`}).join("");
-  const sin=m.filter(g=>!TARJ.some(x=>x[0]===g.tarjeta));
-  const dEsp=comp.filter(g=>g.por==="esposa");
-  const w=v=>tot?(v/tot*100):0;
-  return `<div class="card"><div class="mut">Total en tarjetas este mes</div><div class="total">${fmt(tot)}</div>
-   <div class="split"><i style="width:${w(neg)}%;background:var(--neg)"></i><i style="width:${w(compTot)}%;background:var(--comp)"></i><i style="width:${w(per)}%;background:var(--per)"></i></div>
-   <div class="row" style="margin-top:10px"><span class="mut">Cotejados con estado de cuenta: ${cot} de ${m.length}</span>${sin.length?`<span class="warn">${sin.length} sin tarjeta</span>`:""}</div></div>
-   <div class="grid">${kc}</div>
-   <div class="grid">
-    <div class="card"><span class="pill" style="--c:var(--neg)">Negocio</span><div class="total" style="font-size:24px;margin-top:6px">${fmt(neg)}</div></div>
-    <div class="card"><span class="pill" style="--c:var(--comp)">Compartido</span><div class="total" style="font-size:24px;margin-top:6px">${fmt(compTot)}</div><div class="mut">Tu parte <b>${fmt(compMia)}</b> · Esposa <b>${fmt(compTot-compMia)}</b></div><div class="mut">${dEsp.length} capturados por tu esposa (${fmt(sum(dEsp))})</div></div>
-    <div class="card"><span class="pill" style="--c:var(--per)">Personal</span><div class="total" style="font-size:24px;margin-top:6px">${fmt(per)}</div></div>
-   </div>
-   <div class="card"><div class="row"><h3>Efectivo este mes</h3><span class="num">${fmt(sum(cashL))}</span></div><div class="mut">${cashL.length} gastos, no entran al cotejo del estado de cuenta</div></div>
-   <div class="card"><h3>Deudas pendientes</h3>${deudas.length?deudas.map(g=>`<div class="item s2"><div class="n">${esc(g.nota||"Sin concepto")}<div class="mut">Pagó ${esc(g.quien||"Yo")} · se le debe a <b>${esc(g.deuda)}</b> · ${dmy(g.fecha)}</div></div><span class="num">${fmt(g.monto)}</span><button data-act="saldar" data-id="${esc(g.id)}">Saldar</button></div>`).join(""):'<div class="empty">No hay deudas pendientes.</div>'}</div>
-   <div class="card"><div class="row"><h3>Crédito hipotecario</h3>${hipoEstado()}</div></div>`;
+  const hoy=ymd(new Date()),k=ym();
+  const efe=D.gastos.filter(g=>g.tarjeta==="Efectivo");
+  const hoyL=efe.filter(g=>g.fecha===hoy);
+  const mesE=efe.filter(g=>g.fecha&&g.fecha.startsWith(k));
+  const deudas=efe.filter(g=>g.deuda&&!g.saldada);
+  const fxPend=D.fijos.filter(f=>!D.gastos.some(g=>g.fijoId===f.id&&g.fecha.startsWith(k)));
+  const hipPend=D.hip.monto&&!D.pagos.some(p=>p.mes===k);
+  const fila=g=>`<div class="item s2"><div class="n">${esc(g.nota||"Sin concepto")}<div class="mut">Pagó ${esc(g.quien||"Yo")}${g.deuda?` · se le debe a <b>${esc(g.deuda)}</b>${g.saldada?" (saldado)":""}`:""} · ${dmy(g.fecha)}</div></div><span class="num">${fmt(g.monto)}</span>${g.deuda&&!g.saldada?`<button data-act="saldar" data-id="${esc(g.id)}">Saldar</button>`:"<span></span>"}</div>`;
+  const nPend=deudas.length+(hipPend?1:0)+(fxPend.length?1:0);
+  const fecha=new Date().toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long"});
+  return `<div class="card"><div class="mut" style="text-transform:capitalize">${fecha}</div>
+   <div class="mut" style="margin-top:6px">Efectivo gastado hoy</div><div class="total">${fmt(sum(hoyL))}</div>
+   <div class="mut">${hoyL.length} gastos hoy · este mes en efectivo: <b>${fmt(sum(mesE))}</b></div></div>
+   <div class="card"><h2 style="margin-bottom:4px">Efectivo de hoy</h2>${hoyL.length?hoyL.map(fila).join(""):'<div class="empty">Hoy no has capturado gastos en efectivo.</div>'}</div>
+   <div class="card"><div class="row" style="margin-bottom:4px"><h2>Pendiente</h2><span class="${nPend?"warn":"ok"}">${nPend?nPend+(nPend===1?" pendiente":" pendientes"):"Todo al día"}</span></div>
+   ${deudas.map(fila).join("")}
+   ${hipPend?`<div class="item s2"><div class="n">Hipoteca de este mes<div class="mut">${hipoEstado().replace(/<[^>]+>/g,"")}</div></div><span class="num">${fmt(D.hip.monto)}</span><button data-go="hipoteca">Abrir</button></div>`:""}
+   ${fxPend.length?`<div class="item s2"><div class="n">Cargos fijos sin registrar este mes<div class="mut">${fxPend.length} por registrar · ${fmt(fxPend.reduce((t,f)=>t+f.monto,0))}</div></div><span></span><button data-go="fijos">Abrir</button></div>`:""}
+   ${nPend?"":'<div class="empty">No hay deudas, pagos ni fijos pendientes.</div>'}</div>`;
 }
 function hipoEstado(){
   const h=D.hip,pag=D.pagos.find(p=>p.mes===ym());
@@ -201,9 +194,9 @@ function formGasto(){
    <label>${o?"Tarjeta o efectivo":"Tarjeta"}<select id="g-tarj">${topt(o?TNE:TN)}</select></label>
    <label>Fecha<input id="g-date" type="date" required value="${ymd(new Date())}"></label>
    ${o?`<label>Tipo<select id="g-tipo">${topt(TIPOS.map(t=>[t[0],t[1]]))}</select></label>`:""}
-   <label id="g-pctl" ${o?"hidden":""}>${o?"% que pagas tú":"% que paga tu esposo"}<input id="g-pct" type="number" min="0" max="100" step="any" value="50"></label>
-   ${o?`<label class="efe" hidden>Quién pagó<select id="g-quien"><option>Yo</option><option>Esposa</option><option>Otro</option></select></label>
-   <label class="efe" hidden>A quién se le debe (opcional)<input id="g-deuda" maxlength="40" placeholder="Ej. Esposa, Juan"></label>`:""}
+   <label id="g-pctl" ${o?"hidden":""}>${o?"% que pagas tú":"% que paga la otra persona"}<input id="g-pct" type="number" min="0" max="100" step="any" value="50"></label>
+   ${o?`<label class="efe" hidden>Quién pagó<select id="g-quien"><option>Yo</option><option>Otra persona</option></select></label>
+   <label class="efe" hidden>A quién se le debe (opcional)<input id="g-deuda" maxlength="40" placeholder="Ej. nombre de la persona"></label>`:""}
    <label class="full">Concepto<input id="g-note" type="text" maxlength="80" placeholder="Ej. súper, gasolina, hosting"></label>
    <button class="pri full" type="submit">Agregar gasto</button></form></section>`;
 }
@@ -213,7 +206,7 @@ function vGastos(){
   const items=m.length?m.map(g=>{const t=TIPOS.find(x=>x[0]===g.tipo)||TIPOS[2],efe=g.tarjeta==="Efectivo";
     const extra=g.tipo==="compartido"?(o?` · tu parte ${fmt(miParte(g))}`:` · tu parte ${fmt(g.monto*(100-pctDueno(g))/100)}`):"";
     const ex=efe?` · pagó ${esc(g.quien||"Yo")}${g.deuda?` · se debe a ${esc(g.deuda)}${g.saldada?" (saldado)":""}`:""}`:"";
-    const quien=g.por==="esposa"?(o?" · capturó esposa":" · capturaste tú"):(o?"":" · capturó tu esposo");
+    const quien=g.por==="esposa"?(o?" · capturó la otra persona":" · capturaste tú"):(o?"":" · capturó el dueño");
     const mine=o||g.user_id===me;
     return `<div class="item">${(efe||!o)?"<span></span>":`<input type="checkbox" data-act="cot" data-id="${esc(g.id)}" ${g.cotejado?"checked":""} aria-label="Cotejado con estado de cuenta">`}
     <div class="n"><div>${esc(g.nota||"Sin nota")}${g.fijoId?' <span class="mut">(fijo)</span>':""}</div>
@@ -245,7 +238,7 @@ function vFijos(){
 }
 function vHipoteca(){
   const h=D.hip,pag=D.pagos.find(p=>p.mes===ym()),o=owner();
-  const lista=[...D.pagos].sort((a,b)=>b.mes.localeCompare(a.mes)).map(p=>`<div class="item s2"><div class="n">${esc(p.mes)}<div class="mut">Pagado el ${dmy(p.fecha)}${p.registrado_por==="esposa"?" · registró esposa":""}</div></div><span class="num">${fmt(p.monto)}</span>${o?`<button class="x" data-act="delp" data-id="${esc(p.id)}" aria-label="Eliminar">✕</button>`:"<span></span>"}</div>`).join("")||'<div class="empty">Aún no hay pagos registrados.</div>';
+  const lista=[...D.pagos].sort((a,b)=>b.mes.localeCompare(a.mes)).map(p=>`<div class="item s2"><div class="n">${esc(p.mes)}<div class="mut">Pagado el ${dmy(p.fecha)}${p.registrado_por==="esposa"?" · registró la otra persona":""}</div></div><span class="num">${fmt(p.monto)}</span>${o?`<button class="x" data-act="delp" data-id="${esc(p.id)}" aria-label="Eliminar">✕</button>`:"<span></span>"}</div>`).join("")||'<div class="empty">Aún no hay pagos registrados.</div>';
   const totPag=D.pagos.reduce((s,p)=>s+p.monto,0);
   return `<section class="card"><h2 style="margin-bottom:12px">Crédito hipotecario</h2>
    ${o?`<form id="fh"><label>Pago mensual<input id="h-monto" type="number" min="0" step="any" inputmode="decimal" value="${h.monto||""}"></label>
@@ -261,10 +254,10 @@ function vHipoteca(){
 }
 function vAcceso(){
   const esp=D.invit[0];
-  return `<section class="card"><h2 style="margin-bottom:6px">Acceso de tu esposa</h2>
-  <p class="mut" style="margin-top:0">Ella solo ve y captura gastos compartidos y ve la hipoteca. No ve tus gastos de negocio ni personales. Escribe su correo, y luego ella abre la app y toca "Crear cuenta" con ese mismo correo.</p>
+  return `<section class="card"><h2 style="margin-bottom:6px">Acceso compartido</h2>
+  <p class="mut" style="margin-top:0">La persona invitada solo ve y captura gastos compartidos, y ve la hipoteca. No ve tus gastos de negocio ni personales. Escribe su correo, y luego esa persona abre la app y toca "Crear cuenta" con ese mismo correo.</p>
   ${esp?`<div class="row"><span>Invitada: <b>${esc(esp.email)}</b></span><button data-act="deli" data-id="${esc(esp.email)}">Quitar invitación</button></div>`:
-  `<form id="fi"><label class="full">Correo de tu esposa<input id="i-mail" type="email" required></label><button class="pri full" type="submit">Invitar</button></form>`}
+  `<form id="fi"><label class="full">Correo de la persona invitada<input id="i-mail" type="email" required></label><button class="pri full" type="submit">Invitar</button></form>`}
   </section>
   <section class="card"><h2 style="margin-bottom:6px">Cambiar contraseña</h2>
   <form id="fp"><label class="full">Contraseña nueva<input id="p-p1" type="password" autocomplete="new-password" minlength="6" required></label>
@@ -279,13 +272,14 @@ async function shell(){
   $("app").innerHTML=`<div class="top"><h1>Mis Gastos</h1><div class="month"><button id="prev" aria-label="Mes anterior">‹</button><strong id="mlabel" style="min-width:120px;text-align:center"></strong><button id="next" aria-label="Mes siguiente">›</button></div></div>
   <div class="tabs" id="tabs" role="tablist"></div><div id="note" class="msg" hidden></div><div id="view"></div>`;
   $("tabs").innerHTML=(owner()?TABS_O:TABS_E).map(([k,l])=>`<button role="tab" data-tab="${k}">${l}</button>`).join("");
-  $("tabs").onclick=async e=>{const t=e.target.dataset.tab;if(!t)return;if(t==="salir"){await sb.auth.signOut();return boot()}tab=t;render()};
+  $("tabs").onclick=async e=>{const t=e.target.dataset.tab;if(!t)return;if(t==="salir"){await sb.auth.signOut();return boot()}if(t==="resumen"){cur=new Date();cur.setDate(1)}tab=t;render()};
   $("prev").onclick=()=>{cur.setMonth(cur.getMonth()-1);render()};
   $("next").onclick=()=>{cur.setMonth(cur.getMonth()+1);render()};
   render();
 }
 function render(){
   if(!$("view"))return;
+  $("prev").parentElement.hidden=tab==="resumen";
   $("mlabel").textContent=cur.toLocaleDateString("es-MX",{month:"long",year:"numeric"});
   document.querySelectorAll("#tabs button").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
   const ae=document.activeElement,typing=ae&&/INPUT|SELECT/.test(ae.tagName)&&ae.type!=="checkbox"&&ae.closest("form");
@@ -305,6 +299,7 @@ document.addEventListener("change",e=>{
 });
 document.addEventListener("click",e=>{
   const t=e.target,a=t.dataset&&t.dataset.act;
+  if(t.dataset&&t.dataset.go){tab=t.dataset.go;render();return}
   if(a==="delg")run(sb.from("fin_gastos").delete().eq("id",t.dataset.id));
   if(a==="delf")run(sb.from("fin_fijos").delete().eq("id",t.dataset.id));
   if(a==="delp")run(sb.from("fin_hipoteca_pagos").delete().eq("id",t.dataset.id));
