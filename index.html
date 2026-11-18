@@ -61,6 +61,9 @@ form .full{grid-column:1/-1}
 .tri{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
 .tri div{display:flex;flex-direction:column;gap:2px;min-width:0}
 .tri b{font-size:15px;overflow-wrap:anywhere}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.danger{color:var(--bad);border-color:var(--bad)}
+.big{font:600 24px var(--head)}
 .login{max-width:380px;margin:8vh auto 0}
 [hidden]{display:none!important}
 @media (max-width:420px){.total{font-size:30px}}
@@ -79,30 +82,55 @@ const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 const TARJ=[["AMEX Verde","--k1"],["AMEX Platinum","--k2"],["BBVA Platinum","--k3"]];
 const TN=TARJ.map(t=>[t[0],t[0]]),TNE=[...TN,["Efectivo","Efectivo"]];
 const TIPOS=[["negocio","Negocio","--neg"],["compartido","Compartido","--comp"],["personal","Personal","--per"]];
+const TT=TIPOS.map(t=>[t[0],t[1]]);
+const MES=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
 const $=id=>document.getElementById(id);
 const fmt=n=>"$"+Number(n||0).toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:2});
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const pad=n=>String(n).padStart(2,"0");
 const ymd=d=>d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
-const dmy=s=>s.split("-").reverse().join("/");
+const fd=s=>{if(!s)return"";const[y,m,d]=s.split("-");return (+d)+" "+MES[+m-1]+" "+y};
 const tcol=t=>(TARJ.find(x=>x[0]===t)||["","--per"])[1];
 const topt=(arr,sel)=>arr.map(x=>`<option value="${esc(x[0])}"${x[0]===sel?" selected":""}>${esc(x[1])}</option>`).join("");
-let rol=null,tab="",fTarj="",cur=new Date(),D={gastos:[],fijos:[],pagos:[],hip:{},invit:[]},note="",noteErr=false;
+const clampPct=v=>Math.min(100,Math.max(0,isNaN(parseFloat(v))?50:parseFloat(v)));
+const diasMes=(y,m0)=>new Date(y,m0+1,0).getDate();
+let rol=null,tab="",fTarj="",cur=new Date(),D={gastos:[],fijos:[],pagos:[],hip:{},invit:[]},edit=null,armed=false,me=null;
 cur.setDate(1);
 const ym=()=>cur.getFullYear()+"-"+pad(cur.getMonth()+1);
-const monthDays=()=>new Date(cur.getFullYear(),cur.getMonth()+1,0).getDate();
+const ymNow=()=>{const t=new Date();return t.getFullYear()+"-"+pad(t.getMonth()+1)};
 const owner=()=>rol==="owner";
-function fijosVirtuales(){
-  const k=ym();
-  return D.fijos.filter(f=>(f.creado||"").slice(0,7)<=k&&!D.gastos.some(g=>g.fijoId===f.id&&g.fecha&&g.fecha.startsWith(k)))
-    .map(f=>({id:"fx-"+f.id,virtual:true,fijoId:f.id,monto:f.monto,tarjeta:f.tarjeta,tipo:f.tipo,pct:f.tipo==="compartido"?50:null,nota:f.nombre,cotejado:false,por:"owner",fecha:k+"-"+pad(Math.min(f.dia,monthDays()))}));
-}
-const mesG=()=>[...D.gastos.filter(g=>g.fecha&&g.fecha.startsWith(ym())),...fijosVirtuales()];
 const pctDueno=g=>g.pct==null?50:Number(g.pct);
 const miParte=g=>g.tipo==="compartido"?g.monto*pctDueno(g)/100:g.monto;
 const sum=a=>a.reduce((s,g)=>s+Number(g.monto),0);
-const say=(m,err)=>{note=m;noteErr=!!err;const n=$("note");if(n){n.textContent=m;n.className="msg"+(err?" err":"");n.hidden=!m}};
-const dbErr=e=>say("No se pudo completar: "+(e&&e.message||"error de conexión"),true);
+const say=(m,err)=>{const n=$("note");if(n){n.textContent=m;n.className="msg"+(err?" err":"");n.hidden=!m}};
+const dbErr=e=>say(e&&e.code==="23505"?"Ese mes ya tiene un pago registrado. Edítalo desde la lista.":"No se pudo completar: "+(e&&e.message||"error de conexión"),true);
+
+/* ---------- fijos: se suman solos cada mes ---------- */
+function fijosVirtuales(){
+  const k=ym();
+  return D.fijos.filter(f=>(f.creado||"").slice(0,7)<=k&&!D.gastos.some(g=>g.fijoId===f.id&&g.fecha&&g.fecha.startsWith(k)))
+    .map(f=>({id:"fx-"+f.id,virtual:true,fijoId:f.id,monto:f.monto,tarjeta:f.tarjeta,tipo:f.tipo,pct:f.tipo==="compartido"?50:null,nota:f.nombre,cotejado:false,por:"owner",
+      fecha:k+"-"+pad(Math.min(f.dia,diasMes(cur.getFullYear(),cur.getMonth())))}));
+}
+const mesG=()=>[...D.gastos.filter(g=>g.fecha&&g.fecha.startsWith(ym())),...fijosVirtuales()];
+function proxCobro(dia){
+  const t=new Date();let y=t.getFullYear(),m=t.getMonth(),dd=Math.min(dia,diasMes(y,m));
+  if(dd<t.getDate()){m++;if(m>11){m=0;y++}dd=Math.min(dia,diasMes(y,m))}
+  return y+"-"+pad(m+1)+"-"+pad(dd);
+}
+function hipProx(){
+  if(!D.hip.monto)return null;
+  const t=new Date(),hoy=ymd(t);
+  for(let i=0;i<36;i++){
+    const d=new Date(t.getFullYear(),t.getMonth()+i,1),mes=d.getFullYear()+"-"+pad(d.getMonth()+1);
+    if(!D.pagos.some(p=>p.mes===mes)){
+      const fecha=mes+"-"+pad(Math.min(D.hip.dia||1,diasMes(d.getFullYear(),d.getMonth())));
+      const dias=Math.round((new Date(fecha+"T00:00:00")-new Date(hoy+"T00:00:00"))/864e5);
+      return{mes,fecha,dias,vencida:dias<0,esteMes:mes===ymNow()};
+    }
+  }
+  return null;
+}
 
 /* ---------- sesión ---------- */
 async function boot(){
@@ -112,7 +140,7 @@ async function boot(){
   const {data,error}=await sb.rpc("fin_reclamar");
   if(error){return pantallaLogin("No se pudo verificar tu acceso: "+error.message)}
   if(!data)return pantallaSinAcceso(session.user.email);
-  rol=data;tab=owner()?"resumen":"gastos";
+  rol=data;tab=owner()?"resumen":"gastos";edit=null;
   await cargar();shell();
 }
 function pantallaLogin(m){
@@ -164,147 +192,188 @@ async function cargar(){
   D.hip=r[2].data||{};
   if(owner()){D.fijos=(r[3].data||[]).map(f=>({...f,monto:Number(f.monto)}));D.invit=r[4].data||[]}
 }
-async function run(p){const {error}=await p;if(error)return dbErr(error);say("");await cargar();render()}
+async function run(p){const {error}=await p;if(error){dbErr(error);return false}say("");await cargar();render();return true}
 
 /* ---------- vistas ---------- */
+const fila=g=>`<div class="item s2"><div class="n">${esc(g.nota||"Sin concepto")}<div class="mut">${esc(g.tarjeta)} · pagó ${esc(g.quien||"Yo")} · se le debe a <b>${esc(g.deuda)}</b> · ${fd(g.fecha)}</div></div><span class="num">${fmt(g.monto)}</span><button data-act="saldar" data-id="${esc(g.id)}">Saldar</button></div>`;
+
 function vResumen(){
-  const hoy=ymd(new Date()),k=ym();
+  const hoy=ymd(new Date()),k=ymNow();
   const efe=D.gastos.filter(g=>g.tarjeta==="Efectivo");
-  const hoyL=efe.filter(g=>g.fecha===hoy);
-  const mesE=efe.filter(g=>g.fecha&&g.fecha.startsWith(k));
-  const deudas=efe.filter(g=>g.deuda&&!g.saldada);
-  const hipPend=D.hip.monto&&!D.pagos.some(p=>p.mes===k);
-  const fila=g=>`<div class="item s2"><div class="n">${esc(g.nota||"Sin concepto")}<div class="mut">Pagó ${esc(g.quien||"Yo")}${g.deuda?` · se le debe a <b>${esc(g.deuda)}</b>${g.saldada?" (saldado)":""}`:""} · ${dmy(g.fecha)}</div></div><span class="num">${fmt(g.monto)}</span>${g.deuda&&!g.saldada?`<button data-act="saldar" data-id="${esc(g.id)}">Saldar</button>`:"<span></span>"}</div>`;
+  const hoyL=efe.filter(g=>g.fecha===hoy),mesE=efe.filter(g=>g.fecha&&g.fecha.startsWith(k));
+  const deudas=D.gastos.filter(g=>g.deuda&&!g.saldada);
+  const hp=hipProx(),hipPend=hp&&hp.esteMes;
   const nPend=deudas.length+(hipPend?1:0);
   const fecha=new Date().toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long"});
   const mesAll=mesG().filter(g=>TARJ.some(x=>x[0]===g.tarjeta));
   const corte=TARJ.map(([t,c])=>{
     const L=mesAll.filter(g=>g.tarjeta===t),tot=sum(L);
     const neg=sum(L.filter(g=>g.tipo==="negocio")),compL=L.filter(g=>g.tipo==="compartido");
-    const compMio=compL.reduce((s,g)=>s+miParte(g),0),compEsp=sum(compL)-compMio;
+    const compMio=compL.reduce((s,g)=>s+miParte(g),0),compSofi=sum(compL)-compMio;
     const mio=tot-neg-sum(compL)+compMio;
     return `<div class="card kcard" style="--c:var(${c})"><div class="row"><h3>${t}</h3><span class="num">${fmt(tot)}</span></div>
-     <div class="tri"><div><span class="mut">Mío</span><b class="num">${fmt(mio)}</b></div><div><span class="mut">Esposa</span><b class="num">${fmt(compEsp)}</b></div><div><span class="mut">Negocio</span><b class="num">${fmt(neg)}</b></div></div></div>`}).join("");
+     <div class="tri"><div><span class="mut">Mío</span><b class="num">${fmt(mio)}</b></div><div><span class="mut">Sofi</span><b class="num">${fmt(compSofi)}</b></div><div><span class="mut">Negocio</span><b class="num">${fmt(neg)}</b></div></div></div>`}).join("");
+  const hipFila=hipPend?`<div class="item s2"><div class="n">Hipoteca<div class="mut ${hp.vencida?"warn":""}">${hp.vencida?"Vencida el ":"Vence el "}${fd(hp.fecha)}</div></div><span class="num">${fmt(D.hip.monto)}</span><button data-go="hipoteca">Registrar</button></div>`:"";
   return `<div class="card"><div class="mut">${fecha.charAt(0).toUpperCase()+fecha.slice(1)}</div>
    <div class="mut" style="margin-top:6px">Efectivo gastado hoy</div><div class="total">${fmt(sum(hoyL))}</div>
    <div class="mut">${hoyL.length} ${hoyL.length===1?"gasto":"gastos"} hoy · este mes en efectivo: <b>${fmt(sum(mesE))}</b></div></div>
-   <div class="card"><h2 style="margin-bottom:4px">Efectivo de hoy</h2>${hoyL.length?hoyL.map(fila).join(""):'<div class="empty">Hoy no has capturado gastos en efectivo.</div>'}</div>
-   <h2 style="margin-top:4px">Corte de tarjetas</h2><div class="grid">${corte}</div>
+   ${hoyL.length?`<div class="card"><h2 style="margin-bottom:4px">Efectivo de hoy</h2>${hoyL.map(g=>`<div class="item s2"><div class="n">${esc(g.nota||"Sin concepto")}<div class="mut">Pagó ${esc(g.quien||"Yo")}${g.deuda?` · se le debe a <b>${esc(g.deuda)}</b>`:""}</div></div><span class="num">${fmt(g.monto)}</span><button class="x" data-edit="gastos" data-id="${esc(g.id)}" aria-label="Editar">✎</button></div>`).join("")}</div>`:""}
    <div class="card"><div class="row" style="margin-bottom:4px"><h2>Pendiente</h2><span class="${nPend?"warn":"ok"}">${nPend?nPend+(nPend===1?" pendiente":" pendientes"):"Todo al día"}</span></div>
-   ${deudas.map(fila).join("")}
-   ${hipPend?`<div class="item s2"><div class="n">Hipoteca de este mes<div class="mut">${hipoEstado().replace(/<[^>]+>/g,"")}</div></div><span class="num">${fmt(D.hip.monto)}</span><button data-go="hipoteca">Abrir</button></div>`:""}
-   ${nPend?"":'<div class="empty">No hay deudas ni pagos pendientes.</div>'}</div>`;
-}
-function hipoEstado(){
-  const h=D.hip,pag=D.pagos.find(p=>p.mes===ym());
-  if(!h.monto)return '<span class="mut">Sin configurar.</span>';
-  const dia=Math.min(h.dia||1,monthDays());
-  return pag?`<span class="ok">Pagada el ${dmy(pag.fecha)} · ${fmt(pag.monto)}</span>`:`<span class="warn">Pendiente: ${fmt(h.monto)} el ${pad(dia)}/${pad(cur.getMonth()+1)}</span>`;
+   ${deudas.map(fila).join("")}${hipFila}
+   ${nPend?"":'<div class="empty">No hay deudas ni pagos pendientes.</div>'}
+   ${hp&&!hipPend?`<div class="mut" style="margin-top:8px">Próximo pago de hipoteca: <b>${fd(hp.fecha)}</b> · ${fmt(D.hip.monto)}</div>`:""}</div>
+   <h2 style="margin-top:4px">Corte de tarjetas</h2><div class="grid">${corte}</div>`;
 }
 
-function formGasto(){
+function vGastos(){
   const o=owner();
+  const m=mesG().filter(g=>(o||g.tipo==="compartido")&&(!fTarj||g.tarjeta===fTarj)).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const items=m.length?m.map(g=>{
+    const t=TIPOS.find(x=>x[0]===g.tipo)||TIPOS[2],efe=g.tarjeta==="Efectivo";
+    const extra=g.tipo==="compartido"?(o?` · tu parte ${fmt(miParte(g))}`:` · tu parte ${fmt(g.monto*(100-pctDueno(g))/100)}`):"";
+    const ex=g.deuda?` · se debe a ${esc(g.deuda)}${g.saldada?" (saldado)":""}`:(efe?` · pagó ${esc(g.quien||"Yo")}`:"");
+    const quien=o?(g.por==="esposa"?" · capturó Sofi":""):(g.por==="esposa"?"":" · capturó tu pareja");
+    const mine=o||g.user_id===me;
+    const eb=g.virtual?`<button class="x" data-edit="fijos" data-id="${esc(g.fijoId)}" aria-label="Editar">✎</button>`:`<button class="x" data-edit="gastos" data-id="${esc(g.id)}" aria-label="Editar">✎</button>`;
+    return `<div class="item">${(efe||!o)?"<span></span>":`<input type="checkbox" data-act="cot" data-id="${esc(g.id)}" ${g.cotejado?"checked":""} aria-label="Cotejado con estado de cuenta">`}
+    <div class="n"><div>${esc(g.nota||"Sin nota")}${g.fijoId?' <span class="mut">(fijo)</span>':""}</div>
+    <div class="mut"><span style="color:var(${tcol(g.tarjeta)})">●</span> ${esc(g.tarjeta)} · ${fd(g.fecha)} · <span class="pill" style="--c:var(${t[2]})">${t[1]}</span>${extra}${ex}${quien}</div></div>
+    <span class="num">${fmt(g.monto)}</span>${mine?eb:"<span></span>"}</div>`}).join(""):'<div class="empty">No hay gastos en este mes.</div>';
   return `<section class="card"><h2 style="margin-bottom:12px">${o?"Nuevo gasto":"Nuevo gasto compartido"}</h2>
    <form id="fg"><label>Monto<input id="g-amt" type="number" min="0.01" step="any" inputmode="decimal" required placeholder="0,00"></label>
    <label>${o?"Tarjeta o efectivo":"Tarjeta"}<select id="g-tarj">${topt(o?TNE:TN)}</select></label>
    <label>Fecha<input id="g-date" type="date" required value="${ymd(new Date())}"></label>
-   ${o?`<label>Tipo<select id="g-tipo">${topt(TIPOS.map(t=>[t[0],t[1]]))}</select></label>`:""}
-   <label id="g-pctl" ${o?"hidden":""}>${o?"% que pagas tú":"% que paga la otra persona"}<input id="g-pct" type="number" min="0" max="100" step="any" value="50"></label>
-   ${o?`<label class="efe" hidden>Quién pagó<select id="g-quien"><option>Yo</option><option>Otra persona</option></select></label>
-   <label class="efe" hidden>A quién se le debe (opcional)<input id="g-deuda" maxlength="40" placeholder="Ej. nombre de la persona"></label>`:""}
+   ${o?`<label>Tipo<select id="g-tipo">${topt(TT)}</select></label>`:""}
+   <label id="g-pctl" ${o?"hidden":""}>${o?"% que pagas tú":"% que paga tu pareja"}<input id="g-pct" type="number" min="0" max="100" step="any" value="50"></label>
+   ${o?`<label class="efe" hidden>Quién pagó<select id="g-quien"><option>Yo</option><option>Sofi</option><option>Otro</option></select></label>
+   <label class="efe" hidden>A quién se le debe (opcional)<input id="g-deuda" maxlength="40"></label>`:""}
    <label class="full">Concepto<input id="g-note" type="text" maxlength="80" placeholder="Ej. súper, gasolina, hosting"></label>
-   <button class="pri full" type="submit">Agregar gasto</button></form></section>`;
-}
-function vGastos(){
-  const o=owner();
-  const m=mesG().filter(g=>(o||g.tipo==="compartido")&&(!fTarj||g.tarjeta===fTarj)).sort((a,b)=>b.fecha.localeCompare(a.fecha));
-  const items=m.length?m.map(g=>{const t=TIPOS.find(x=>x[0]===g.tipo)||TIPOS[2],efe=g.tarjeta==="Efectivo";
-    const extra=g.tipo==="compartido"?(o?` · tu parte ${fmt(miParte(g))}`:` · tu parte ${fmt(g.monto*(100-pctDueno(g))/100)}`):"";
-    const ex=efe?` · pagó ${esc(g.quien||"Yo")}${g.deuda?` · se debe a ${esc(g.deuda)}${g.saldada?" (saldado)":""}`:""}`:"";
-    const quien=g.por==="esposa"?(o?" · capturó la otra persona":" · capturaste tú"):(o?"":" · capturó el dueño");
-    const mine=o||g.user_id===me;
-    return `<div class="item">${(efe||!o)?"<span></span>":`<input type="checkbox" data-act="cot" data-id="${esc(g.id)}" ${g.cotejado?"checked":""} aria-label="Cotejado con estado de cuenta">`}
-    <div class="n"><div>${esc(g.nota||"Sin nota")}${g.fijoId?' <span class="mut">(fijo)</span>':""}</div>
-    <div class="mut"><span style="color:var(${tcol(g.tarjeta)})">●</span> ${esc(g.tarjeta)} · ${dmy(g.fecha)} · <span class="pill" style="--c:var(${t[2]})">${t[1]}</span>${extra}${ex}${quien}</div></div>
-    <span class="num">${fmt(g.monto)}</span>${mine&&!g.virtual?`<button class="x" data-act="delg" data-id="${esc(g.id)}" aria-label="Eliminar">✕</button>`:"<span></span>"}</div>`}).join(""):'<div class="empty">No hay gastos en este mes. Agrega el primero arriba.</div>';
-  const tot=sum(m);
-  return `${formGasto()}
-   <section class="card"><div class="row" style="margin-bottom:6px"><h2>Movimientos · ${fmt(tot)}</h2>
+   <button class="pri full" type="submit">Agregar gasto</button></form></section>
+   <section class="card"><div class="row" style="margin-bottom:6px"><h2>Movimientos · ${fmt(sum(m))}</h2>
    <select id="g-filtro" style="width:auto"><option value="">Todas</option>${topt(o?TNE:TN,fTarj)}</select></div>
-   ${o?'<div class="mut" style="margin-bottom:4px">Marca la casilla cuando el cargo ya coincide con tu estado de cuenta.</div>':""}${items}</section>`;
+   ${o?'<div class="mut" style="margin-bottom:4px">Marca la casilla cuando el cargo ya coincide con tu estado de cuenta. Toca ✎ para editar.</div>':""}${items}</section>`;
 }
+
 function vFijos(){
   const porT=TARJ.map(([t,c])=>{
     const fx=D.fijos.filter(f=>f.tarjeta===t);
-    const body=fx.length?fx.map(f=>`<div class="item s2"><div class="n">${esc(f.nombre)}<div class="mut">Se cobra el día ${f.dia} · ${(TIPOS.find(x=>x[0]===f.tipo)||TIPOS[2])[1]}</div></div><span class="num">${fmt(f.monto)}</span><button class="x" data-act="delf" data-id="${esc(f.id)}" aria-label="Eliminar">✕</button></div>`).join(""):'<div class="empty">Sin cargos fijos.</div>';
+    const body=fx.length?fx.map(f=>`<div class="item s2"><div class="n">${esc(f.nombre)}<div class="mut">Próximo cobro ${fd(proxCobro(f.dia))} · ${(TIPOS.find(x=>x[0]===f.tipo)||TIPOS[2])[1]}</div></div><span class="num">${fmt(f.monto)}</span><button class="x" data-edit="fijos" data-id="${esc(f.id)}" aria-label="Editar">✎</button></div>`).join(""):'<div class="empty">Sin cargos fijos.</div>';
     return `<section class="card kcard" style="--c:var(${c})"><div class="row"><h3>${t}</h3><span class="num">${fmt(fx.reduce((s,f)=>s+f.monto,0))} / mes</span></div>${body}</section>`}).join("");
-  return `<section class="card"><h2 style="margin-bottom:12px">Nuevo cargo fijo</h2>
+  return `<section class="card"><div class="mut">Total fijo al mes</div><div class="total" style="font-size:26px">${fmt(D.fijos.reduce((s,f)=>s+f.monto,0))}</div>
+   <div class="mut" style="margin-top:6px">Se suman solos cada mes a su tarjeta. Para dejar de contarlo, abre el fijo con ✎ y elimínalo.</div></section>${porT}
+   <section class="card"><h2 style="margin-bottom:12px">Nuevo cargo fijo</h2>
    <form id="ff"><label>Nombre<input id="f-name" required maxlength="40" placeholder="Netflix, Spotify, Celular"></label>
    <label>Monto<input id="f-amt" type="number" min="0.01" step="any" inputmode="decimal" required></label>
    <label>Tarjeta<select id="f-tarj">${topt(TN)}</select></label>
-   <label>Día de cobro<input id="f-dia" type="number" min="1" max="31" required value="1"></label>
-   <label>Tipo<select id="f-tipo">${topt(TIPOS.map(t=>[t[0],t[1]]))}</select></label>
-   <button class="pri full" type="submit">Agregar cargo fijo</button></form></section>
-   <section class="card"><div class="mut">Total fijo al mes</div><div class="total" style="font-size:26px">${fmt(D.fijos.reduce((s,f)=>s+f.monto,0))}</div>
-   <div class="mut" style="margin-top:6px">Los fijos se suman solos cada mes a su tarjeta. Para dejar de contarlos, bórralos de esta lista.</div></section>${porT}`;
+   <label>Día de cobro cada mes<input id="f-dia" type="number" min="1" max="31" required value="1"></label>
+   <label>Tipo<select id="f-tipo">${topt(TT)}</select></label>
+   <button class="pri full" type="submit">Agregar cargo fijo</button></form></section>`;
 }
+
 function vHipoteca(){
-  const h=D.hip,pag=D.pagos.find(p=>p.mes===ym()),o=owner();
-  const lista=[...D.pagos].sort((a,b)=>b.mes.localeCompare(a.mes)).map(p=>`<div class="item s2"><div class="n">${esc(p.mes)}<div class="mut">Pagado el ${dmy(p.fecha)}${p.registrado_por==="esposa"?" · registró la otra persona":""}</div></div><span class="num">${fmt(p.monto)}</span>${o?`<button class="x" data-act="delp" data-id="${esc(p.id)}" aria-label="Eliminar">✕</button>`:"<span></span>"}</div>`).join("")||'<div class="empty">Aún no hay pagos registrados.</div>';
+  const h=D.hip,o=owner(),hp=hipProx();
+  const lista=[...D.pagos].sort((a,b)=>b.mes.localeCompare(a.mes)).map(p=>`<div class="item s2"><div class="n">Pago de ${esc(MES[+p.mes.slice(5)-1])} ${p.mes.slice(0,4)}<div class="mut">Pagado el ${fd(p.fecha)}${p.registrado_por==="esposa"?(o?" · registró Sofi":" · registraste tú"):(o?"":" · registró tu pareja")}</div></div><span class="num">${fmt(p.monto)}</span>${o?`<button class="x" data-edit="pagos" data-id="${esc(p.id)}" aria-label="Editar">✎</button>`:"<span></span>"}</div>`).join("")||'<div class="empty">Aún no hay pagos registrados.</div>';
   const totPag=D.pagos.reduce((s,p)=>s+p.monto,0);
-  return `<section class="card"><h2 style="margin-bottom:12px">Crédito hipotecario</h2>
-   ${o?`<form id="fh"><label>Pago mensual<input id="h-monto" type="number" min="0" step="any" inputmode="decimal" value="${h.monto||""}"></label>
-   <label>Día de pago<input id="h-dia" type="number" min="1" max="31" value="${h.dia||""}"></label>
-   <label>Saldo pendiente (opcional)<input id="h-saldo" type="number" min="0" step="any" inputmode="decimal" value="${h.saldo||""}"></label>
+  const mitad=(h.monto||0)/2;
+  let prox='';
+  if(h.monto&&hp){
+    const est=hp.vencida?`<span class="warn">Vencida hace ${-hp.dias} ${-hp.dias===1?"día":"días"}</span>`:hp.dias===0?'<span class="warn">Vence hoy</span>':`<span class="mut">Faltan ${hp.dias} ${hp.dias===1?"día":"días"}</span>`;
+    prox=`<section class="card"><div class="mut">Próximo pago</div><div class="big">${fd(hp.fecha)}</div><div>${est}</div>
+     <div class="row" style="margin-top:12px"><span>Pago mensual</span><b class="num">${fmt(h.monto)}</b></div>
+     ${o?`<div class="row"><span>Yo (50%)</span><b class="num">${fmt(mitad)}</b></div><div class="row"><span>Sofi (50%)</span><b class="num">${fmt(mitad)}</b></div>`:`<div class="row"><span>Tu parte (50%)</span><b class="num">${fmt(mitad)}</b></div>`}
+     ${h.nota?`<div class="mut" style="margin-top:6px">${esc(h.nota)}</div>`:""}</section>
+     <section class="card"><h2 style="margin-bottom:12px">Registrar pago</h2>
+     <form id="frp"><label>Mes que cubre<input id="r-mes" type="month" required value="${hp.mes}"></label>
+     <label>Fecha en que se pagó<input id="r-fecha" type="date" required value="${ymd(new Date())}"></label>
+     <label>Monto pagado<input id="r-monto" type="number" min="0.01" step="any" inputmode="decimal" required value="${h.monto}"></label>
+     <button class="pri full" type="submit">Registrar pago</button></form></section>`;
+  }else if(!h.monto){prox=`<section class="card"><div class="empty">${o?"Captura abajo los datos de la hipoteca para empezar.":"El dueño aún no configura la hipoteca."}</div></section>`}
+  const cfg=o?`<section class="card"><h2 style="margin-bottom:12px">Datos de la hipoteca</h2>
+   <form id="fh"><label>Pago mensual<input id="h-monto" type="number" min="0" step="any" inputmode="decimal" value="${h.monto||""}"></label>
+   <label>Día de pago cada mes<input id="h-dia" type="number" min="1" max="31" value="${h.dia||""}"></label>
+   <label>Saldo al empezar (opcional)<input id="h-saldo" type="number" min="0" step="any" inputmode="decimal" value="${h.saldo||""}"></label>
    <label>Banco o referencia<input id="h-nota" maxlength="40" value="${esc(h.nota||"")}"></label>
-   <button class="pri full" type="submit">Guardar datos</button></form>`:
-   `<div class="row"><span>Pago mensual</span><b class="num">${fmt(h.monto)}</b></div><div class="row"><span>Día de pago</span><b>${h.dia||"—"}</b></div>${h.nota?`<div class="mut">${esc(h.nota)}</div>`:""}`}</section>
-   <section class="card"><div class="row"><div><div class="mut">Este mes</div>${hipoEstado()}</div>
-   <button id="regpago" class="pri" ${pag||!h.monto?"disabled":""}>Registrar pago de este mes</button></div>
-   ${h.saldo?`<div class="mut" style="margin-top:8px">Saldo pendiente: <b>${fmt(Math.max(0,h.saldo-totPag))}</b></div>`:""}</section>
-   <section class="card"><h3>Pagos registrados</h3>${lista}</section>`;
+   <button class="pri full" type="submit">Guardar datos</button></form>
+   ${h.saldo?`<div class="mut" style="margin-top:8px">Saldo actual: <b>${fmt(Math.max(0,h.saldo-totPag))}</b> (saldo inicial menos pagos registrados)</div>`:""}</section>`:"";
+  return `${prox}<section class="card"><h3>Pagos registrados</h3>${lista}</section>${cfg}`;
 }
+
 function vAcceso(){
   const esp=D.invit[0];
-  return `<section class="card"><h2 style="margin-bottom:6px">Acceso compartido</h2>
-  <p class="mut" style="margin-top:0">La persona invitada solo ve y captura gastos compartidos, y ve la hipoteca. No ve tus gastos de negocio ni personales. Escribe su correo, y luego esa persona abre la app y toca "Crear cuenta" con ese mismo correo.</p>
+  return `<section class="card"><h2 style="margin-bottom:6px">Acceso de Sofi</h2>
+  <p class="mut" style="margin-top:0">Sofi solo ve y captura gastos compartidos, y ve la hipoteca. No ve tus gastos de negocio ni personales. Escribe su correo y luego ella abre la app y toca "Crear cuenta" con ese mismo correo.</p>
   ${esp?`<div class="row"><span>Invitada: <b>${esc(esp.email)}</b></span><button data-act="deli" data-id="${esc(esp.email)}">Quitar invitación</button></div>`:
-  `<form id="fi"><label class="full">Correo de la persona invitada<input id="i-mail" type="email" required></label><button class="pri full" type="submit">Invitar</button></form>`}
+  `<form id="fi"><label class="full">Correo de Sofi<input id="i-mail" type="email" required></label><button class="pri full" type="submit">Invitar</button></form>`}
   </section>
   <section class="card"><h2 style="margin-bottom:6px">Cambiar contraseña</h2>
   <form id="fp"><label class="full">Contraseña nueva<input id="p-p1" type="password" autocomplete="new-password" minlength="6" required></label>
   <button class="full" type="submit">Cambiar contraseña</button></form></section>
   <section class="card"><button id="out" class="full">Cerrar sesión</button></section>`;
 }
-let me=null;
+
+function vEdit(){
+  const {k,id}=edit,o=owner();
+  const row=k==="gastos"?D.gastos.find(x=>x.id===id):k==="fijos"?D.fijos.find(x=>x.id===id):D.pagos.find(x=>x.id===id);
+  if(!row){edit=null;return"";}
+  let titulo="",campos="";
+  if(k==="gastos"){
+    titulo="gasto";
+    campos=`<label>Monto<input id="e-amt" type="number" min="0.01" step="any" inputmode="decimal" required value="${row.monto}"></label>
+    <label>Tarjeta o efectivo<select id="e-tarj">${topt(o?TNE:TN,row.tarjeta)}</select></label>
+    <label>Fecha<input id="e-date" type="date" required value="${esc(row.fecha)}"></label>
+    ${o?`<label>Tipo<select id="e-tipo">${topt(TT,row.tipo)}</select></label>`:""}
+    <label id="e-pctl" ${(o?row.tipo:"compartido")==="compartido"?"":"hidden"}>${o?"% que pagas tú":"% que paga tu pareja"}<input id="e-pct" type="number" min="0" max="100" step="any" value="${pctDueno(row)}"></label>
+    <label class="full">Concepto<input id="e-note" maxlength="80" value="${esc(row.nota||"")}"></label>
+    ${o?`<label>Quién pagó<select id="e-quien">${topt([["Yo","Yo"],["Sofi","Sofi"],["Otro","Otro"]],row.quien||"Yo")}</select></label>
+    <label>A quién se le debe<input id="e-deuda" maxlength="40" value="${esc(row.deuda||"")}"></label>
+    <label class="full" style="flex-direction:row;align-items:center;gap:10px"><input id="e-saldada" type="checkbox" ${row.saldada?"checked":""}> Ya se saldó esta deuda</label>`:""}`;
+  }else if(k==="fijos"){
+    titulo="cargo fijo";
+    campos=`<label>Nombre<input id="e-name" required maxlength="40" value="${esc(row.nombre)}"></label>
+    <label>Monto<input id="e-amt" type="number" min="0.01" step="any" inputmode="decimal" required value="${row.monto}"></label>
+    <label>Tarjeta<select id="e-tarj">${topt(TN,row.tarjeta)}</select></label>
+    <label>Día de cobro cada mes<input id="e-dia" type="number" min="1" max="31" required value="${row.dia}"></label>
+    <label>Tipo<select id="e-tipo">${topt(TT,row.tipo)}</select></label>`;
+  }else{
+    titulo="pago de hipoteca";
+    campos=`<label>Mes que cubre<input id="e-mes" type="month" required value="${esc(row.mes)}"></label>
+    <label>Fecha en que se pagó<input id="e-date" type="date" required value="${esc(row.fecha)}"></label>
+    <label>Monto pagado<input id="e-amt" type="number" min="0.01" step="any" inputmode="decimal" required value="${row.monto}"></label>`;
+  }
+  return `<section class="card"><h2 style="margin-bottom:12px">Editar ${titulo}</h2><form id="fe">${campos}
+   <div class="full actions"><button class="pri" type="submit">Guardar cambios</button><button type="button" data-act="canc">Cancelar</button><button type="button" class="danger" data-act="del">${armed?"Sí, eliminar":"Eliminar"}</button></div></form>
+   ${armed?'<div class="msg err" style="margin-top:10px">Esto no se puede deshacer. Toca "Sí, eliminar" para confirmar.</div>':""}
+   ${k==="fijos"?'<div class="mut" style="margin-top:10px">Los cambios aplican de ahora en adelante. Los meses ya cotejados no cambian.</div>':""}</section>`;
+}
+
 const TABS_O=[["resumen","Resumen"],["gastos","Gastos"],["fijos","Fijos"],["hipoteca","Hipoteca"],["acceso","Acceso"]];
 const TABS_E=[["gastos","Compartidos"],["hipoteca","Hipoteca"],["salir","Salir"]];
 async function shell(){
   me=(await sb.auth.getUser()).data.user.id;
-  $("app").innerHTML=`<div class="top"><h1>Mis Gastos</h1><div class="month"><button id="prev" aria-label="Mes anterior">‹</button><strong id="mlabel" style="min-width:120px;text-align:center"></strong><button id="next" aria-label="Mes siguiente">›</button></div></div>
+  $("app").innerHTML=`<div class="top"><h1>Mis Gastos</h1><div class="month" id="mnav"><button id="prev" aria-label="Mes anterior">‹</button><strong id="mlabel" style="min-width:120px;text-align:center"></strong><button id="next" aria-label="Mes siguiente">›</button></div></div>
   <div class="tabs" id="tabs" role="tablist"></div><div id="note" class="msg" hidden></div><div id="view"></div>`;
   $("tabs").innerHTML=(owner()?TABS_O:TABS_E).map(([k,l])=>`<button role="tab" data-tab="${k}">${l}</button>`).join("");
-  $("tabs").onclick=async e=>{const t=e.target.dataset.tab;if(!t)return;if(t==="salir"){await sb.auth.signOut();return boot()}if(t==="resumen"){cur=new Date();cur.setDate(1)}tab=t;render()};
+  $("tabs").onclick=async e=>{const t=e.target.dataset.tab;if(!t)return;if(t==="salir"){await sb.auth.signOut();return boot()}
+    if(t==="resumen"){cur=new Date();cur.setDate(1)}tab=t;edit=null;armed=false;say("");render()};
   $("prev").onclick=()=>{cur.setMonth(cur.getMonth()-1);render()};
   $("next").onclick=()=>{cur.setMonth(cur.getMonth()+1);render()};
   render();
 }
 function render(){
   if(!$("view"))return;
-  $("prev").parentElement.hidden=tab==="resumen";
+  $("mnav").hidden=tab!=="gastos"||!!edit;
   $("mlabel").textContent=cur.toLocaleDateString("es-MX",{month:"long",year:"numeric"});
   document.querySelectorAll("#tabs button").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
-  const ae=document.activeElement,typing=ae&&/INPUT|SELECT/.test(ae.tagName)&&ae.type!=="checkbox"&&ae.closest("form");
-  if(typing)return;
-  const v={resumen:vResumen,gastos:vGastos,fijos:vFijos,hipoteca:vHipoteca,acceso:vAcceso}[tab];
+  const v=edit?vEdit:{resumen:vResumen,gastos:vGastos,fijos:vFijos,hipoteca:vHipoteca,acceso:vAcceso}[tab];
   $("view").innerHTML=v?v():"";
-  if(tab==="acceso"&&$("out"))$("out").onclick=async()=>{await sb.auth.signOut();boot()};
+  if(tab==="acceso"&&!edit&&$("out"))$("out").onclick=async()=>{await sb.auth.signOut();boot()};
 }
 
 /* ---------- eventos ---------- */
 document.addEventListener("change",e=>{
   const t=e.target;
   if(t.id==="g-tipo")$("g-pctl").hidden=t.value!=="compartido";
+  if(t.id==="e-tipo"&&$("e-pctl"))$("e-pctl").hidden=t.value!=="compartido";
   if(t.id==="g-tarj")document.querySelectorAll(".efe").forEach(l=>l.hidden=t.value!=="Efectivo");
   if(t.id==="g-filtro"){fTarj=t.value;render()}
   if(t.dataset&&t.dataset.act==="cot"){
@@ -314,18 +383,18 @@ document.addEventListener("change",e=>{
     else run(sb.from("fin_gastos").update({cotejado:t.checked}).eq("id",id));
   }
 });
+const TABLA={gastos:"fin_gastos",fijos:"fin_fijos",pagos:"fin_hipoteca_pagos"};
 document.addEventListener("click",e=>{
-  const t=e.target,a=t.dataset&&t.dataset.act;
-  if(t.dataset&&t.dataset.go){tab=t.dataset.go;render();return}
-  if(a==="delg")run(sb.from("fin_gastos").delete().eq("id",t.dataset.id));
-  if(a==="delf")run(sb.from("fin_fijos").delete().eq("id",t.dataset.id));
-  if(a==="delp")run(sb.from("fin_hipoteca_pagos").delete().eq("id",t.dataset.id));
+  const t=e.target.closest("button")||e.target,a=t.dataset&&t.dataset.act;
+  if(t.tagName==="BUTTON"&&document.activeElement&&document.activeElement.blur)document.activeElement.blur();
+  if(t.dataset&&t.dataset.go){tab=t.dataset.go;edit=null;say("");render();return}
+  if(t.dataset&&t.dataset.edit){edit={k:t.dataset.edit,id:t.dataset.id};armed=false;say("");render();window.scrollTo(0,0);return}
+  if(a==="canc"){edit=null;armed=false;render();return}
+  if(a==="del"){
+    if(!armed){armed=true;render();return}
+    run(sb.from(TABLA[edit.k]).delete().eq("id",edit.id)).then(ok=>{if(ok){edit=null;armed=false;render()}});return}
   if(a==="saldar")run(sb.from("fin_gastos").update({saldada:true}).eq("id",t.dataset.id));
   if(a==="deli")run(sb.from("fin_invitados").delete().eq("email",t.dataset.id));
-  if(t.id==="regfijos"){const k=ym();
-    const rows=D.fijos.filter(f=>!D.gastos.some(g=>g.fijo_id===f.id&&g.fecha.startsWith(k))).map(f=>({monto:f.monto,tarjeta:f.tarjeta,tipo:f.tipo,nota:f.nombre,fijo_id:f.id,fecha:k+"-"+pad(Math.min(f.dia,monthDays())),pct:f.tipo==="compartido"?50:null}));
-    if(rows.length)run(sb.from("fin_gastos").insert(rows))}
-  if(t.id==="regpago")run(sb.from("fin_hipoteca_pagos").insert({mes:ym(),monto:D.hip.monto,fecha:ym()+"-"+pad(Math.min(D.hip.dia||1,monthDays()))}));
 });
 document.addEventListener("submit",e=>{
   e.preventDefault();const f=e.target.id;
@@ -333,16 +402,37 @@ document.addEventListener("submit",e=>{
     const o=owner(),tarjeta=$("g-tarj").value,tipo=o?$("g-tipo").value:"compartido";
     const g={monto:parseFloat($("g-amt").value),tarjeta,fecha:$("g-date").value,tipo,nota:$("g-note").value.trim()||null};
     if(!(g.monto>0))return;
-    if(tipo==="compartido")g.pct=Math.min(100,Math.max(0,parseFloat($("g-pct").value)||50));
+    if(tipo==="compartido")g.pct=clampPct($("g-pct").value);
     if(tarjeta==="Efectivo"){g.quien=$("g-quien").value;g.deuda=$("g-deuda").value.trim()||null;g.cotejado=false}
-    run(sb.from("fin_gastos").insert(g)).then(()=>{if($("g-amt")){$("g-amt").value="";$("g-note").value="";$("g-amt").focus()}});
+    run(sb.from("fin_gastos").insert(g)).then(ok=>{if(ok&&$("g-amt")){$("g-amt").value="";$("g-note").value="";$("g-amt").focus()}});
   }
   if(f==="ff"){
     const o={nombre:$("f-name").value.trim(),monto:parseFloat($("f-amt").value),tarjeta:$("f-tarj").value,dia:Math.min(31,Math.max(1,parseInt($("f-dia").value)||1)),tipo:$("f-tipo").value};
     if(!o.nombre||!(o.monto>0))return;
     run(sb.from("fin_fijos").insert(o));
   }
-  if(f==="fh")run(sb.from("fin_hipoteca_config").upsert({id:1,monto:parseFloat($("h-monto").value)||0,dia:Math.min(31,Math.max(1,parseInt($("h-dia").value)||1)),saldo:parseFloat($("h-saldo").value)||0,nota:$("h-nota").value.trim()||null})).then(()=>say("Datos de la hipoteca guardados."));
+  if(f==="fh")run(sb.from("fin_hipoteca_config").upsert({id:1,monto:parseFloat($("h-monto").value)||0,dia:Math.min(31,Math.max(1,parseInt($("h-dia").value)||1)),saldo:parseFloat($("h-saldo").value)||0,nota:$("h-nota").value.trim()||null})).then(ok=>{if(ok)say("Datos de la hipoteca guardados.")});
+  if(f==="frp"){
+    const mes=$("r-mes").value,fecha=$("r-fecha").value,monto=parseFloat($("r-monto").value);
+    if(!mes||!fecha||!(monto>0))return;
+    run(sb.from("fin_hipoteca_pagos").insert({mes,fecha,monto})).then(ok=>{if(ok)say("Pago registrado.")});
+  }
+  if(f==="fe"){
+    const {k,id}=edit;let patch;
+    const monto=parseFloat($("e-amt").value);if(!(monto>0))return;
+    if(k==="gastos"){
+      const tipo=owner()?$("e-tipo").value:"compartido";
+      patch={monto,tarjeta:$("e-tarj").value,fecha:$("e-date").value,tipo,pct:tipo==="compartido"?clampPct($("e-pct").value):null,nota:$("e-note").value.trim()||null};
+      if(owner()){patch.quien=$("e-quien").value;patch.deuda=$("e-deuda").value.trim()||null;patch.saldada=!!patch.deuda&&$("e-saldada").checked}
+    }else if(k==="fijos"){
+      patch={nombre:$("e-name").value.trim(),monto,tarjeta:$("e-tarj").value,dia:Math.min(31,Math.max(1,parseInt($("e-dia").value)||1)),tipo:$("e-tipo").value};
+      if(!patch.nombre)return;
+    }else{
+      patch={mes:$("e-mes").value,fecha:$("e-date").value,monto};
+    }
+    run(sb.from(TABLA[k]).update(patch).eq("id",id)).then(ok=>{if(ok){edit=null;armed=false;render();say("Cambios guardados.")}});
+  }
+  if(f==="fi")run(sb.from("fin_invitados").insert({email:$("i-mail").value.trim().toLowerCase()}));
   if(f==="fr"){
     const a=$("r-p1").value,b=$("r-p2").value;
     if(a!==b)return say("Las contraseñas no coinciden.",true);
@@ -351,10 +441,12 @@ document.addEventListener("submit",e=>{
       recDone=true;history.replaceState(null,"",location.pathname);boot()});
   }
   if(f==="fp")sb.auth.updateUser({password:$("p-p1").value}).then(({error})=>{if(error)return say(error.message,true);$("p-p1").value="";say("Contraseña cambiada.")});
-  if(f==="fi")run(sb.from("fin_invitados").insert({email:$("i-mail").value.trim().toLowerCase()}));
 });
 sb.auth.onAuthStateChange(ev=>{if(ev==="SIGNED_OUT")boot()});
-document.addEventListener("visibilitychange",()=>{if(!document.hidden&&rol)cargar().then(render)});
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden||!rol||edit)return;
+  const a=document.activeElement;if(a&&/INPUT|SELECT|TEXTAREA/.test(a.tagName)&&a.type!=="checkbox")return;
+  cargar().then(render)});
 boot();
 </script>
 </body>
