@@ -118,7 +118,7 @@ function pantallaLogin(m){
     if(error){$("l-in").disabled=false;say(error.message==="Invalid login credentials"?"Correo o contraseña incorrectos.":error.message,true)}else boot()};
   $("l-up").onclick=async()=>{const email=$("l-mail").value.trim(),password=$("l-pass").value;
     if(!email||password.length<6)return say("Escribe tu correo y una contraseña de al menos 6 caracteres.",true);
-    const {data,error}=await sb.auth.signUp({email,password});
+    const {data,error}=await sb.auth.signUp({email,password,options:{emailRedirectTo:location.origin+location.pathname}});
     if(error)return say(error.message,true);
     if(data.session)boot();else say("Cuenta creada. Revisa tu correo para confirmarla y luego entra.")};
 }
