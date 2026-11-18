@@ -70,6 +70,7 @@ form .full{grid-column:1/-1}
 <script>
 const SUPABASE_URL="https://zwurngrfmginclnhamao.supabase.co";
 const SUPABASE_KEY="sb_publishable_cgM-cRVXPCfc_7m_Z_2uAA_bPrpNscL";
+const RECOVERY=/type=recovery/.test(location.hash);let recDone=false;
 const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 
 const TARJ=[["AMEX Verde","--k1"],["AMEX Platinum","--k2"],["BBVA Platinum","--k3"]];
@@ -97,6 +98,7 @@ const dbErr=e=>say("No se pudo completar: "+(e&&e.message||"error de conexión")
 
 /* ---------- sesión ---------- */
 async function boot(){
+  if(RECOVERY&&!recDone)return pantallaNuevaClave();
   const {data:{session}}=await sb.auth.getSession();
   if(!session)return pantallaLogin();
   const {data,error}=await sb.rpc("fin_reclamar");
@@ -110,17 +112,30 @@ function pantallaLogin(m){
   <form id="fl"><label class="full">Correo<input id="l-mail" type="email" autocomplete="email" required></label>
   <label class="full">Contraseña<input id="l-pass" type="password" autocomplete="current-password" minlength="6" required></label>
   <button class="pri full" type="submit" id="l-in">Entrar</button>
-  <button class="full" type="button" id="l-up">Crear cuenta</button></form>
+  <button class="full" type="button" id="l-up">Crear cuenta</button>
+  <button class="full" type="button" id="l-forgot" style="border:0;background:none;color:var(--acc)">Olvidé mi contraseña</button></form>
   <div id="note" class="msg ${m?"err":""}" style="margin-top:12px" ${m?"":"hidden"}>${esc(m||"")}</div>
   <div class="mut" style="margin-top:12px">Si eres la esposa: primero pide que te inviten con tu correo y luego usa "Crear cuenta".</div></div>`;
   $("fl").onsubmit=async e=>{e.preventDefault();$("l-in").disabled=true;
     const {error}=await sb.auth.signInWithPassword({email:$("l-mail").value.trim(),password:$("l-pass").value});
     if(error){$("l-in").disabled=false;say(error.message==="Invalid login credentials"?"Correo o contraseña incorrectos.":error.message,true)}else boot()};
+  $("l-forgot").onclick=async()=>{const email=$("l-mail").value.trim();
+    if(!email)return say("Escribe tu correo arriba y vuelve a tocar \"Olvidé mi contraseña\".",true);
+    const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+    if(error)return say(error.message,true);
+    say("Si ese correo tiene cuenta, te enviamos un enlace para crear una contraseña nueva. Revisa tu bandeja y el spam.")};
   $("l-up").onclick=async()=>{const email=$("l-mail").value.trim(),password=$("l-pass").value;
     if(!email||password.length<6)return say("Escribe tu correo y una contraseña de al menos 6 caracteres.",true);
     const {data,error}=await sb.auth.signUp({email,password,options:{emailRedirectTo:location.origin+location.pathname}});
     if(error)return say(error.message,true);
     if(data.session)boot();else say("Cuenta creada. Revisa tu correo para confirmarla y luego entra.")};
+}
+function pantallaNuevaClave(){
+  $("app").innerHTML=`<div class="login card"><h1 style="margin-bottom:4px">Contraseña nueva</h1><div class="mut" style="margin-bottom:14px">Escribe la contraseña nueva y guárdala en un lugar seguro.</div>
+  <form id="fr"><label class="full">Contraseña nueva<input id="r-p1" type="password" autocomplete="new-password" minlength="6" required></label>
+  <label class="full">Repite la contraseña<input id="r-p2" type="password" autocomplete="new-password" minlength="6" required></label>
+  <button class="pri full" type="submit">Guardar contraseña</button></form>
+  <div id="note" class="msg" style="margin-top:12px" hidden></div></div>`;
 }
 function pantallaSinAcceso(mail){
   $("app").innerHTML=`<div class="login card"><h2>Tu cuenta aún no tiene acceso</h2>
@@ -250,7 +265,11 @@ function vAcceso(){
   <p class="mut" style="margin-top:0">Ella solo ve y captura gastos compartidos y ve la hipoteca. No ve tus gastos de negocio ni personales. Escribe su correo, y luego ella abre la app y toca "Crear cuenta" con ese mismo correo.</p>
   ${esp?`<div class="row"><span>Invitada: <b>${esc(esp.email)}</b></span><button data-act="deli" data-id="${esc(esp.email)}">Quitar invitación</button></div>`:
   `<form id="fi"><label class="full">Correo de tu esposa<input id="i-mail" type="email" required></label><button class="pri full" type="submit">Invitar</button></form>`}
-  </section><section class="card"><button id="out" class="full">Cerrar sesión</button></section>`;
+  </section>
+  <section class="card"><h2 style="margin-bottom:6px">Cambiar contraseña</h2>
+  <form id="fp"><label class="full">Contraseña nueva<input id="p-p1" type="password" autocomplete="new-password" minlength="6" required></label>
+  <button class="full" type="submit">Cambiar contraseña</button></form></section>
+  <section class="card"><button id="out" class="full">Cerrar sesión</button></section>`;
 }
 let me=null;
 const TABS_O=[["resumen","Resumen"],["gastos","Gastos"],["fijos","Fijos"],["hipoteca","Hipoteca"],["acceso","Acceso"]];
@@ -312,6 +331,14 @@ document.addEventListener("submit",e=>{
     run(sb.from("fin_fijos").insert(o));
   }
   if(f==="fh")run(sb.from("fin_hipoteca_config").upsert({id:1,monto:parseFloat($("h-monto").value)||0,dia:Math.min(31,Math.max(1,parseInt($("h-dia").value)||1)),saldo:parseFloat($("h-saldo").value)||0,nota:$("h-nota").value.trim()||null})).then(()=>say("Datos de la hipoteca guardados."));
+  if(f==="fr"){
+    const a=$("r-p1").value,b=$("r-p2").value;
+    if(a!==b)return say("Las contraseñas no coinciden.",true);
+    sb.auth.updateUser({password:a}).then(({error})=>{
+      if(error)return say(error.message==="Auth session missing!"?"El enlace venció. Vuelve a pedir uno con \"Olvidé mi contraseña\".":error.message,true);
+      recDone=true;history.replaceState(null,"",location.pathname);boot()});
+  }
+  if(f==="fp")sb.auth.updateUser({password:$("p-p1").value}).then(({error})=>{if(error)return say(error.message,true);$("p-p1").value="";say("Contraseña cambiada.")});
   if(f==="fi")run(sb.from("fin_invitados").insert({email:$("i-mail").value.trim().toLowerCase()}));
 });
 sb.auth.onAuthStateChange(ev=>{if(ev==="SIGNED_OUT")boot()});
