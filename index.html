@@ -107,7 +107,7 @@ const tcol=t=>(TARJ.find(x=>x[0]===t)||["","--per"])[1];
 const topt=(arr,sel)=>arr.map(x=>`<option value="${esc(x[0])}"${x[0]===sel?" selected":""}>${esc(x[1])}</option>`).join("");
 const clampPct=v=>Math.min(100,Math.max(0,isNaN(parseFloat(v))?50:parseFloat(v)));
 const diasMes=(y,m0)=>new Date(y,m0+1,0).getDate();
-let rol=null,tab="",fTarj="",cur=new Date(),D={gastos:[],fijos:[],pagos:[],hip:{},invit:[]},edit=null,armed=false,me=null;
+let rol=null,tab="",fTarj="",cur=new Date(),D={gastos:[],fijos:[],pagos:[],hip:{},invit:[]},edit=null,armed=false,me=null,FECHA_OK=false,sfecha="";
 cur.setDate(1);
 const ym=()=>cur.getFullYear()+"-"+pad(cur.getMonth()+1);
 const ymNow=()=>{const t=new Date();return t.getFullYear()+"-"+pad(t.getMonth()+1)};
@@ -140,6 +140,8 @@ function ledger(){
   const r=n=>Math.round(n*100)/100;
   return{ab,sa,sofiDebe:r(sofiDebe),duenoDebe:r(duenoDebe),pagoYo,pagoSofi,neto:r(sofiDebe-duenoDebe)};
 }
+const sdate=()=>FECHA_OK?{saldada_fecha:ymd(new Date())}:{};
+const sd=g=>g.saldada?(g.saldada_fecha?" (saldado el "+fd(g.saldada_fecha)+")":" (saldado)"):"";
 const pagados=()=>D.pagos.filter(p=>p.registrado_por!=="pendiente");
 function hipPlan(){
   const hoy=ymd(new Date());
@@ -158,6 +160,7 @@ async function boot(){
   if(error){return pantallaLogin("No se pudo verificar tu acceso: "+error.message)}
   if(!data)return pantallaSinAcceso(session.user.email);
   rol=data;tab=owner()?"resumen":"compartidos";edit=null;
+  FECHA_OK=!(await sb.from("fin_gastos").select("saldada_fecha").limit(1)).error;
   await cargar();shell();
 }
 function pantallaLogin(m){
@@ -250,8 +253,8 @@ function vGastos(){
   const items=m.length?m.map(g=>{
     const t=TIPOS.find(x=>x[0]===g.tipo)||TIPOS[2],efe=g.tarjeta==="Efectivo";
     const extra=g.tipo==="compartido"?(o?` · tu parte ${fmt(miParte(g))}`:` · tu parte ${fmt(g.monto*(100-pctDueno(g))/100)}`):"";
-    const ex=g.deuda?` · se debe a ${esc(g.deuda)}${g.saldada?" (saldado)":""}`:(efe?` · pagó ${esc(g.quien||"Yo")}`:"");
-    const ex2=ex+(g.saldada&&!g.deuda?" · saldado":"");
+    const ex=g.deuda?` · se debe a ${esc(g.deuda)}${sd(g)}`:(efe?` · pagó ${esc(g.quien||"Yo")}`:"");
+    const ex2=ex+(g.saldada&&!g.deuda?" · saldado"+(g.saldada_fecha?" el "+fd(g.saldada_fecha):""):"");
     const quien=o?(g.por==="esposa"?" · capturó Sofi":""):(g.por==="esposa"?"":" · capturó tu pareja");
     const mine=o||g.user_id===me;
     const eb=g.virtual?`<button class="x" data-edit="fijos" data-id="${esc(g.fijoId)}" aria-label="Editar">✎</button>`:`<button class="x" data-edit="gastos" data-id="${esc(g.id)}" aria-label="Editar">✎</button>`;
@@ -335,7 +338,7 @@ function vCompartidos(){
     else deb=w==="Yo"?`Le debes ${fmt(sof)} a tu pareja`:`Tu pareja te debe ${fmt(own)}`;
     const quien=o?(w==="Yo"?"Pagaste tú":w==="Sofi"?"Pagó Sofi":"Pagó otra persona"):(w==="Sofi"?"Pagaste tú":w==="Yo"?"Pagó tu pareja":"Pagó otra persona");
     const mine=o||g.user_id===me;
-    return `<div class="item s2"><div class="n">${esc(g.nota||"Sin concepto")}<div class="mut">${quien} · ${esc(g.tarjeta)} · ${fd(g.fecha)}</div><div class="mut"><b>${deb}</b></div></div><span class="num">${fmt(g.monto)}</span>${mine?`<button class="x" data-edit="gastos" data-id="${esc(g.id)}" aria-label="Editar">✎</button>`:"<span></span>"}</div>`};
+    return `<div class="item s2"><div class="n">${esc(g.nota||"Sin concepto")}<div class="mut">${quien} · ${esc(g.tarjeta)} · ${fd(g.fecha)}</div><div class="mut"><b>${deb}</b></div>${g.saldada?`<div class="mut">Saldado${g.saldada_fecha?" el "+fd(g.saldada_fecha):""}</div>`:""}</div><span class="num">${fmt(g.monto)}</span>${mine?`<button class="x" data-edit="gastos" data-id="${esc(g.id)}" aria-label="Editar">✎</button>`:"<span></span>"}</div>`};
   let titulo,monto,sub="";
   if(Math.abs(neto)<0.01){titulo="Cuentas al corriente";monto=""}
   else if(o){titulo=neto>0?"Sofi te debe":"Le debes a Sofi";monto=fmt(Math.abs(neto))}
@@ -344,6 +347,7 @@ function vCompartidos(){
     :`Tú pagaste ${fmt(led.pagoSofi)} (tu pareja te debe ${fmt(led.duenoDebe)}) · Tu pareja pagó ${fmt(led.pagoYo)} (le debes ${fmt(led.sofiDebe)})`;
   const saldar=o?`<section class="card"><h2 style="margin-bottom:4px">Saldar la cuenta</h2>
     <div class="mut" style="margin-bottom:12px">Cuando se pague la diferencia, toca el botón: todos los gastos de la lista se marcan como saldados y la cuenta empieza en cero.</div>
+    ${FECHA_OK?`<form onsubmit="return false"><label>Fecha en que se saldó<input id="s-fecha" type="date" value="${esc(sfecha||ymd(new Date()))}"></label></form>`:""}
     ${armed?`<div class="msg err" style="margin-bottom:10px">Se marcarán ${led.ab.length} gastos como saldados. Toca "Sí, saldar cuenta" para confirmar.</div>`:""}
     <div class="actions"><button class="pri" data-act="saldarcuenta" ${led.ab.length?"":"disabled"}>${armed?"Sí, saldar cuenta":"Saldar cuenta"}</button>${armed?'<button data-act="canc2">Cancelar</button>':""}</div></section>`
     :`<div class="mut">Cuando se pague la diferencia, tu pareja salda la cuenta y todo queda en cero.</div>`;
@@ -389,7 +393,8 @@ function vEdit(){
     <label class="full">Concepto<input id="e-note" maxlength="80" value="${esc(row.nota||"")}"></label>
     ${o?`<label>Quién pagó<select id="e-quien">${topt([["Yo","Yo"],["Sofi","Sofi"],["Otro","Otro"]],row.quien||(row.por==="esposa"?"Sofi":"Yo"))}</select></label>
     <label>A quién se le debe<input id="e-deuda" maxlength="40" value="${esc(row.deuda||"")}"></label>
-    <label class="full" style="flex-direction:row;align-items:center;gap:10px"><input id="e-saldada" type="checkbox" ${row.saldada?"checked":""}> Ya se saldó</label>`:`<label>Quién pagó<select id="e-quien">${topt([["Sofi","Yo"],["Yo","Mi pareja"]],row.quien||"Sofi")}</select></label>`}`;
+    <label class="full" style="flex-direction:row;align-items:center;gap:10px"><input id="e-saldada" type="checkbox" ${row.saldada?"checked":""}> Ya se saldó</label>
+    ${FECHA_OK?`<label>Fecha en que se saldó<input id="e-sfecha" type="date" value="${esc(row.saldada_fecha||ymd(new Date()))}"></label>`:""}`:`<label>Quién pagó<select id="e-quien">${topt([["Sofi","Yo"],["Yo","Mi pareja"]],row.quien||"Sofi")}</select></label>`}`;
   }else if(k==="fijos"){
     titulo="cargo fijo";
     campos=`<label>Nombre<input id="e-name" required maxlength="40" value="${esc(row.nombre)}"></label>
@@ -458,12 +463,13 @@ document.addEventListener("click",e=>{
   if(a==="canc"){edit=null;armed=false;render();return}
   if(a==="canc2"){armed=false;render();return}
   if(a==="saldarcuenta"){
-    if(!armed){armed=true;render();return}
-    run(sb.from("fin_gastos").update({saldada:true}).eq("tipo","compartido").eq("saldada",false)).then(ok=>{armed=false;render();if(ok)say("Cuenta saldada.")});return}
+    if(!armed){sfecha=$("s-fecha")?$("s-fecha").value:"";armed=true;render();return}
+    const fs=sfecha||ymd(new Date());
+    run(sb.from("fin_gastos").update({saldada:true,...(FECHA_OK?{saldada_fecha:fs}:{})}).eq("tipo","compartido").eq("saldada",false)).then(ok=>{armed=false;sfecha="";render();if(ok)say("Cuenta saldada el "+fd(fs)+".")});return}
   if(a==="del"){
     if(!armed){armed=true;render();return}
     run(sb.from(TABLA[edit.k]).delete().eq("id",edit.id)).then(ok=>{if(ok){edit=null;armed=false;render()}});return}
-  if(a==="saldar")run(sb.from("fin_gastos").update({saldada:true}).eq("id",t.dataset.id));
+  if(a==="saldar")run(sb.from("fin_gastos").update({saldada:true,...sdate()}).eq("id",t.dataset.id));
   if(a==="deli")run(sb.from("fin_invitados").delete().eq("email",t.dataset.id));
 });
 document.addEventListener("submit",e=>{
@@ -499,7 +505,7 @@ document.addEventListener("submit",e=>{
       const tipo=owner()?$("e-tipo").value:"compartido";
       patch={monto,tarjeta:$("e-tarj").value,fecha:$("e-date").value,tipo,pct:tipo==="compartido"?clampPct($("e-pct").value):null,nota:$("e-note").value.trim()||null};
       patch.quien=$("e-quien").value;
-      if(owner()){patch.deuda=$("e-deuda").value.trim()||null;patch.saldada=$("e-saldada").checked}
+      if(owner()){patch.deuda=$("e-deuda").value.trim()||null;patch.saldada=$("e-saldada").checked;if(FECHA_OK)patch.saldada_fecha=patch.saldada?($("e-sfecha").value||ymd(new Date())):null}
     }else if(k==="fijos"){
       patch={nombre:$("e-name").value.trim(),monto,tarjeta:$("e-tarj").value,dia:Math.min(31,Math.max(1,parseInt($("e-dia").value)||1)),tipo:$("e-tipo").value};
       if(!patch.nombre)return;
