@@ -93,7 +93,7 @@ form .full{grid-column:1/-1}
 <script>
 const SUPABASE_URL="https://zwurngrfmginclnhamao.supabase.co";
 const SUPABASE_KEY="sb_publishable_cgM-cRVXPCfc_7m_Z_2uAA_bPrpNscL";
-const BUILD="2026-11-19-precios";
+const BUILD="2026-11-19-diente";
 (function(){ // si hay una version nueva publicada, la carga sola
   try{fetch(location.pathname+"?t="+Date.now(),{cache:"no-store"}).then(r=>r.text()).then(t=>{
     const m=t.match(/const BUILD="([^"]+)"/);
@@ -438,7 +438,8 @@ function vEdit(){
 }
 
 /* ======================= SALSA MACHA ======================= */
-const FAC={kg:1000,g:1,l:1000,ml:1,pza:1},FAM={kg:"m",g:"m",l:"v",ml:"v",pza:"p"};
+const FAC={kg:1000,g:1,l:1000,ml:1,pza:1,diente:1},FAM={kg:"m",g:"m",l:"v",ml:"v",pza:"p",diente:"d"};
+const ul=u=>u==="diente"?"dientes":(u||"");
 const unidadesDe=u=>Object.keys(FAM).filter(k=>FAM[k]===FAM[u]);
 const qtyIn=(c,from,ing)=>FAM[from]===FAM[ing.unidad]?c*FAC[from]/FAC[ing.unidad]:c;
 const CATEG=["Envases y frascos","Etiquetas y empaque","Marketing","Equipo y utensilios","Transporte","Servicios","Otro"];
@@ -531,7 +532,7 @@ const formaOpts=sel=>topt(FORMA_OPTS,sel||"");
 const rowGasto=g=>`<div class="item s2"><div class="n">${esc(g.concepto)}<div class="mut">${esc(g.categoria||"")} · ${fd(g.fecha)} · ${quienL(g.pago)}${g.forma?" · "+esc(g.forma):""}${g.saldado?" · saldado":""}</div></div><span class="num">${fmt(g.monto)}</span><button class="x" data-edit="sm_gastos" data-id="${esc(g.id)}" aria-label="Editar">✎</button></div>`;
 const rowCompra=c=>{const i=c.ingrediente_id&&ingBy(c.ingrediente_id);
   const pu=i&&c.cantidad>0?` · ${fmt4(c.total/qtyIn(c.cantidad,c.unidad,i))} por ${i.unidad}`:"";
-  return `<div class="item s2"><div class="n">${esc(c.concepto)}<div class="mut">${c.cantidad?fq(c.cantidad)+" "+esc(c.unidad||"")+" · ":""}${c.proveedor?esc(c.proveedor)+" · ":""}${fd(c.fecha)} · ${quienL(c.pago)}${c.forma?" · "+esc(c.forma):""}${c.saldado?" · saldado":""}${pu}</div></div><span class="num">${fmt(c.total)}</span><button class="x" data-edit="sm_compras" data-id="${esc(c.id)}" aria-label="Editar">✎</button></div>`};
+  return `<div class="item s2"><div class="n">${esc(c.concepto)}<div class="mut">${c.cantidad?fq(c.cantidad)+" "+esc(ul(c.unidad))+" · ":""}${c.proveedor?esc(c.proveedor)+" · ":""}${fd(c.fecha)} · ${quienL(c.pago)}${c.forma?" · "+esc(c.forma):""}${c.saldado?" · saldado":""}${pu}</div></div><span class="num">${fmt(c.total)}</span><button class="x" data-edit="sm_compras" data-id="${esc(c.id)}" aria-label="Editar">✎</button></div>`};
 
 function vSResumen(){
   const S=D.sm,o=owner();
@@ -564,7 +565,7 @@ function vSResumen(){
   <section class="card"><div class="row" style="margin-bottom:4px"><h2>Por cobrar</h2><span class="${xCobrar.length?"warn":"ok"}">${xCobrar.length?xCobrar.length+(xCobrar.length===1?" venta":" ventas"):"Nada pendiente"}</span></div>
    ${xCobrar.sort(byFecha).map(rowPorCobrar).join("")||'<div class="empty">No hay ventas por cobrar.</div>'}</section>
   <section class="card"><div class="row" style="margin-bottom:4px"><h2>Por reabastecer</h2><span class="${bajos.length?"warn":"ok"}">${bajos.length?bajos.length+" por surtir":"Todo en orden"}</span></div>
-   ${bajos.map(i=>`<div class="item s2"><div class="n">${esc(i.nombre)}<div class="mut ${i.existencia<0?"warn":""}">Existencia ${fq(i.existencia)} ${i.unidad} · mínimo ${fq(i.minimo)} ${i.unidad}</div></div><span class="num">${fmt4(i.precio)}</span><button data-go="s_compras">Comprar</button></div>`).join("")||'<div class="empty">Ninguna materia prima está por debajo de su mínimo.</div>'}
+   ${bajos.map(i=>`<div class="item s2"><div class="n">${esc(i.nombre)}<div class="mut ${i.existencia<0?"warn":""}">Existencia ${fq(i.existencia)} ${ul(i.unidad)} · mínimo ${fq(i.minimo)} ${ul(i.unidad)}</div></div><span class="num">${fmt4(i.precio)}</span><button data-go="s_compras">Comprar</button></div>`).join("")||'<div class="empty">Ninguna materia prima está por debajo de su mínimo.</div>'}
    <div class="mut" style="margin-top:8px">Valor del inventario de materia prima: <b>${fmt(valor)}</b></div></section>
   <section class="card"><h2 style="margin-bottom:4px">Costo por frasco</h2>
    ${S.rec.map(r=>{const cf=costoFrasco(r),pv=r.precio_venta,g=pv>0?pv-cf:null;return `<div class="item s2"><div class="n">${esc(r.nombre)}<div class="mut">${pv>0?`Venta ${fmt(pv)} · ganancia ${fmt(g)} (${Math.round(g/pv*100)}%)`:"Sin precio de venta"} · ${fq(r.existencia)} frascos en existencia</div></div><span class="num">${fmt(cf)}</span><button data-rec="${esc(r.id)}">Abrir</button></div>`}).join("")||'<div class="empty">Aún no hay recetas. Crea la primera en la pestaña Recetas.</div>'}</section>`;
@@ -631,7 +632,7 @@ function vSCompras(){
 function vSInv(){
   const S=D.sm,valor=S.ing.reduce((s,i)=>s+Math.max(0,i.existencia)*i.precio,0);
   const lista=S.ing.map(i=>{const bajo=(i.minimo>0&&i.existencia<=i.minimo)||i.existencia<0;
-    return `<div class="item s2"><div class="n">${esc(i.nombre)}<div class="mut ${bajo?"warn":""}">Existencia ${fq(i.existencia)} ${i.unidad}${i.minimo>0?" · mínimo "+fq(i.minimo):""}</div><div class="mut">${fmt4(i.precio)} por ${i.unidad}${i.proveedor?" · "+esc(i.proveedor):""}</div></div><span class="num">${fmt(Math.max(0,i.existencia)*i.precio)}</span><button class="x" data-edit="sm_ing" data-id="${esc(i.id)}" aria-label="Editar">✎</button></div>`}).join("")||'<div class="empty">Aún no hay materia prima. Agrega la primera abajo.</div>';
+    return `<div class="item s2"><div class="n">${esc(i.nombre)}<div class="mut ${bajo?"warn":""}">Existencia ${fq(i.existencia)} ${ul(i.unidad)}${i.minimo>0?" · mínimo "+fq(i.minimo):""}</div><div class="mut">${fmt4(i.precio)} por ${i.unidad}${i.proveedor?" · "+esc(i.proveedor):""}</div></div><span class="num">${fmt(Math.max(0,i.existencia)*i.precio)}</span><button class="x" data-edit="sm_ing" data-id="${esc(i.id)}" aria-label="Editar">✎</button></div>`}).join("")||'<div class="empty">Aún no hay materia prima. Agrega la primera abajo.</div>';
   return `<section class="card"><div class="mut">Valor del inventario de materia prima</div><div class="total">${fmt(valor)}</div></section>
   <section class="card"><h2 style="margin-bottom:4px">Materia prima</h2>${lista}</section>
   <section class="card"><h2 style="margin-bottom:4px">Producto terminado</h2>
@@ -661,7 +662,7 @@ function vRecDet(){
   const r=recBy(rdet);if(!r){rdet=null;return vSRec()}
   const S=D.sm,items=S.items.filter(x=>x.receta_id===r.id),cl=costoLote(r),cf=costoFrasco(r),pv=r.precio_venta;
   const itemsH=items.map(it=>{const i=ingBy(it.ingrediente_id);const c=i?qtyIn(it.cantidad,it.unidad,i)*i.precio:0;
-    return `<div class="item s2"><div class="n">${esc(i?i.nombre:"(eliminada)")}<div class="mut">${fq(it.cantidad)} ${it.unidad}${i?" × "+fmt4(i.precio)+" por "+i.unidad:""}</div></div><span class="num">${fmt(c)}</span><button class="x" data-edit="sm_item" data-id="${esc(it.id)}" aria-label="Editar">✎</button></div>`}).join("")||'<div class="empty">Esta receta aún no tiene ingredientes.</div>';
+    return `<div class="item s2"><div class="n">${esc(i?i.nombre:"(eliminada)")}<div class="mut">${fq(it.cantidad)} ${ul(it.unidad)}${i?" × "+fmt4(i.precio)+" por "+i.unidad:""}</div></div><span class="num">${fmt(c)}</span><button class="x" data-edit="sm_item" data-id="${esc(it.id)}" aria-label="Editar">✎</button></div>`}).join("")||'<div class="empty">Esta receta aún no tiene ingredientes.</div>';
   const i0=S.ing[0];
   const prods=S.prod.filter(p=>p.receta_id===r.id).sort(byFecha).slice(0,8).map(p=>`<div class="item s2"><div class="n">${fq(p.lotes)} ${p.lotes===1?"lote":"lotes"} · ${fq(p.frascos)} frascos<div class="mut">${fd(p.fecha)} · costo ${fmt(p.costo)}${p.nota?" · "+esc(p.nota):""}</div></div><span class="num">${fmt(p.frascos>0?p.costo/p.frascos:0)}</span><button class="x" data-edit="sm_prod" data-id="${esc(p.id)}" aria-label="Editar">✎</button></div>`).join("");
   return `<section class="card"><div class="row"><button data-act="recback">‹ Recetas</button><button data-edit="sm_rec" data-id="${esc(r.id)}">Editar receta</button></div>
