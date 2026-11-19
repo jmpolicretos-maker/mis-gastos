@@ -93,7 +93,7 @@ form .full{grid-column:1/-1}
 <script>
 const SUPABASE_URL="https://zwurngrfmginclnhamao.supabase.co";
 const SUPABASE_KEY="sb_publishable_cgM-cRVXPCfc_7m_Z_2uAA_bPrpNscL";
-const BUILD="2026-11-19-ventas";
+const BUILD="2026-11-19-precios";
 (function(){ // si hay una version nueva publicada, la carga sola
   try{fetch(location.pathname+"?t="+Date.now(),{cache:"no-store"}).then(r=>r.text()).then(t=>{
     const m=t.match(/const BUILD="([^"]+)"/);
@@ -647,7 +647,7 @@ function vSInv(){
 }
 
 function vSRec(){
-  const lista=D.sm.rec.map(r=>`<div class="item s2"><div class="n">${esc(r.nombre)}<div class="mut">Rinde ${fq(r.rendimiento)} frascos${r.frasco?" de "+esc(r.frasco):""} · ${fq(r.existencia)} en existencia</div></div><span class="num">${fmt(costoFrasco(r))}</span><button data-rec="${esc(r.id)}">Abrir</button></div>`).join("")||'<div class="empty">Aún no hay recetas.</div>';
+  const lista=D.sm.rec.map(r=>`<div class="item s2"><div class="n">${esc(r.nombre)}<div class="mut">Rinde ${fq(r.rendimiento)} frascos${r.frasco?" de "+esc(r.frasco):""} · ${fq(r.existencia)} en existencia</div><div class="mut">Precio de venta <b>${fmt(r.precio_venta)}</b> · costo ${fmt(costoFrasco(r))} por frasco</div></div><span class="num">${fmt(r.precio_venta)}</span><button data-rec="${esc(r.id)}">Abrir</button></div>`).join("")||'<div class="empty">Aún no hay recetas.</div>';
   return `<section class="card"><h2 style="margin-bottom:4px">Recetas · costo por frasco</h2>${lista}</section>
   <section class="card"><h2 style="margin-bottom:12px">Nueva receta</h2>
    <form id="sr"><label class="full">Nombre<input id="r-name" required maxlength="60" placeholder="Ej. Salsa macha clásica"></label>
@@ -670,6 +670,8 @@ function vRecDet(){
    <div class="row"><span>Costo por frasco</span><b class="num">${fmt(cf)}</b></div>
    ${pv>0?`<div class="row"><span>Precio de venta</span><b class="num">${fmt(pv)}</b></div><div class="row"><span>Ganancia por frasco</span><b class="num ${pv-cf<0?"warn":"ok"}">${fmt(pv-cf)} (${Math.round((pv-cf)/pv*100)}%)</b></div>`:'<div class="mut" style="margin-top:6px">Agrega el precio de venta con "Editar receta" para ver la ganancia.</div>'}
    <div class="row"><span>Frascos en existencia</span><b class="num">${fq(r.existencia)}</b></div></section>
+  <section class="card"><form id="spv"><label>Precio de venta por frasco<input id="pv-precio" type="number" min="0" step="any" inputmode="decimal" required value="${r.precio_venta}"></label><button class="pri full" type="submit">Cambiar precio</button></form>
+   <div class="mut" style="margin-top:8px">El cambio aplica a las ventas nuevas. Las ventas ya registradas no se modifican.</div></section>
   <section class="card"><h2 style="margin-bottom:4px">Ingredientes por lote</h2>${itemsH}</section>
   <section class="card"><h2 style="margin-bottom:12px">Agregar ingrediente</h2>
    ${i0?`<form id="sri"><label class="full">Materia prima<select id="ri-ing">${S.ing.map((i,n)=>`<option value="${esc(i.id)}"${n===0?" selected":""}>${esc(i.nombre)}</option>`).join("")}</select></label>
@@ -832,6 +834,11 @@ function smSubmit(f){
     const cobrado=g("v-est")==="cobrado";
     const v={fecha:g("v-date"),receta_id:rid,concepto,cantidad:r?cant:null,precio:r?(n("v-precio")||null):null,total,cliente:t("v-cli"),cobro:g("v-cobro"),forma:t("v-forma"),cobrado,cobrado_fecha:cobrado?g("v-date"):null,nota:t("v-note")};
     seq(()=>addVenta(v)).then(ok=>{if(ok)say("Venta registrada."+(r?" Frascos descontados del inventario.":""))});
+    return true;
+  }
+  if(f==="spv"){
+    const pv=n("pv-precio");if(isNaN(pv)||pv<0||!rdet)return true;
+    seq(()=>chk(sb.from("sm_recetas").update({precio_venta:pv}).eq("id",rdet))).then(ok=>{if(ok)say("Precio actualizado a "+fmt(pv)+".")});
     return true;
   }
   if(f==="si"){
