@@ -63,6 +63,9 @@ form .full{grid-column:1/-1}
 .tri{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
 .tri div{display:flex;flex-direction:column;gap:2px;min-width:0}
 .tri b{font-size:18px;overflow-wrap:anywhere}
+.modes{display:flex;gap:8px}
+.modes button{flex:1;font-weight:600}
+.modes button[aria-selected=true]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 .actions{display:flex;gap:8px;flex-wrap:wrap}
 .danger{color:var(--bad);border-color:var(--bad)}
 .big{font:600 24px var(--head)}
@@ -107,7 +110,7 @@ const tcol=t=>(TARJ.find(x=>x[0]===t)||["","--per"])[1];
 const topt=(arr,sel)=>arr.map(x=>`<option value="${esc(x[0])}"${x[0]===sel?" selected":""}>${esc(x[1])}</option>`).join("");
 const clampPct=v=>Math.min(100,Math.max(0,isNaN(parseFloat(v))?50:parseFloat(v)));
 const diasMes=(y,m0)=>new Date(y,m0+1,0).getDate();
-let rol=null,tab="",fTarj="",cur=new Date(),D={gastos:[],fijos:[],pagos:[],hip:{},invit:[]},edit=null,armed=false,me=null,FECHA_OK=false,FORMA_OK=false,sfecha="",sforma="Efectivo",sobs="";
+let rol=null,tab="",fTarj="",cur=new Date(),D={gastos:[],fijos:[],pagos:[],hip:{},invit:[],sm:{ing:[],compras:[],gastos:[],rec:[],items:[],prod:[],precios:[]}},modo="fin",rdet=null,edit=null,armed=false,me=null,FECHA_OK=false,FORMA_OK=false,sfecha="",sforma="Efectivo",sobs="";
 cur.setDate(1);
 const ym=()=>cur.getFullYear()+"-"+pad(cur.getMonth()+1);
 const ymNow=()=>{const t=new Date();return t.getFullYear()+"-"+pad(t.getMonth()+1)};
@@ -116,7 +119,11 @@ const pctDueno=g=>g.pct==null?50:Number(g.pct);
 const miParte=g=>g.tipo==="compartido"?g.monto*pctDueno(g)/100:g.monto;
 const sum=a=>a.reduce((s,g)=>s+Number(g.monto),0);
 const say=(m,err)=>{const n=$("note");if(n){n.textContent=m;n.className="msg"+(err?" err":"");n.hidden=!m}};
-const dbErr=e=>say(e&&e.code==="23505"?"Ese mes ya tiene un pago registrado. Edítalo desde la lista.":"No se pudo completar: "+(e&&e.message||"error de conexión"),true);
+const dbErr=e=>{const m=(e&&e.message)||"";let t;
+  if(e&&e.code==="23505")t=m.includes("sm_ingredientes")?"Ya existe una materia prima con ese nombre.":m.includes("sm_recetas")?"Ya existe una receta con ese nombre.":"Ese mes ya tiene un pago registrado. Edítalo desde la lista.";
+  else if(e&&e.code==="23503")t="No se puede eliminar: se usa en otro registro, por ejemplo en una receta.";
+  else t="No se pudo completar: "+(m||"error de conexión");
+  say(t,true)};
 
 /* ---------- fijos: se suman solos cada mes ---------- */
 function fijosVirtuales(){
@@ -159,7 +166,8 @@ async function boot(){
   const {data,error}=await sb.rpc("fin_reclamar");
   if(error){return pantallaLogin("No se pudo verificar tu acceso: "+error.message)}
   if(!data)return pantallaSinAcceso(session.user.email);
-  rol=data;tab=owner()?"resumen":"compartidos";edit=null;
+  rol=data;try{modo=localStorage.getItem("modo")==="sm"?"sm":"fin"}catch(e){}
+  tab=modo==="sm"?"s_resumen":(owner()?"resumen":"compartidos");edit=null;rdet=null;
   FECHA_OK=!(await sb.from("fin_gastos").select("saldada_fecha").limit(1)).error;
   FORMA_OK=!(await sb.from("fin_gastos").select("saldada_forma,saldada_obs").limit(1)).error;
   await cargar();shell();
@@ -212,6 +220,7 @@ async function cargar(){
   D.pagos=(r[1].data||[]).map(p=>({...p,monto:Number(p.monto)}));
   D.hip=r[2].data||{};
   if(owner()){D.fijos=(r[3].data||[]).map(f=>({...f,monto:Number(f.monto)}));D.invit=r[4].data||[]}
+  await cargarSM();
 }
 async function run(p){const {error}=await p;if(error){dbErr(error);return false}say("");await cargar();render();return true}
 
@@ -381,7 +390,7 @@ function vAcceso(){
 
 function vEdit(){
   const {k,id}=edit,o=owner();
-  const row=k==="gastos"?D.gastos.find(x=>x.id===id):k==="fijos"?D.fijos.find(x=>x.id===id):D.pagos.find(x=>x.id===id);
+  const row=rowOf(k,id);
   if(!row){edit=null;return"";}
   let titulo="",campos="";
   if(k==="gastos"){
@@ -404,6 +413,8 @@ function vEdit(){
     <label>Tarjeta<select id="e-tarj">${topt(TN,row.tarjeta)}</select></label>
     <label>Día de cobro cada mes<input id="e-dia" type="number" min="1" max="31" required value="${row.dia}"></label>
     <label>Tipo<select id="e-tipo">${topt(TT,row.tipo)}</select></label>`;
+  }else if(k.startsWith("sm_")){
+    ({titulo,campos}=smEditFields(k,row));
   }else{
     titulo="pago de hipoteca";
     const pre=!!edit.preset,pagado=pre||row.registrado_por!=="pendiente";
@@ -418,25 +429,414 @@ function vEdit(){
    ${k==="fijos"?'<div class="mut" style="margin-top:10px">Los cambios aplican de ahora en adelante. Los meses ya cotejados no cambian.</div>':""}</section>`;
 }
 
+/* ======================= SALSA MACHA ======================= */
+const FAC={kg:1000,g:1,l:1000,ml:1,pza:1},FAM={kg:"m",g:"m",l:"v",ml:"v",pza:"p"};
+const unidadesDe=u=>Object.keys(FAM).filter(k=>FAM[k]===FAM[u]);
+const qtyIn=(c,from,ing)=>FAM[from]===FAM[ing.unidad]?c*FAC[from]/FAC[ing.unidad]:c;
+const CATEG=["Envases y frascos","Etiquetas y empaque","Marketing","Equipo y utensilios","Transporte","Servicios","Otro"];
+const CAT_OPTS=CATEG.map(c=>[c,c]),FORMA_OPTS=[["","—"],["Efectivo","Efectivo"],["Transferencia","Transferencia"],["Tarjeta","Tarjeta"],["Otro","Otro"]];
+const UNI_OPTS=Object.keys(FAM).map(u=>[u,u]);
+const fmt4=n=>"$"+Number(n||0).toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4});
+const fq=n=>Number(n||0).toLocaleString("es-MX",{maximumFractionDigits:3});
+const ingBy=id=>D.sm.ing.find(i=>i.id===id);
+const recBy=id=>D.sm.rec.find(r=>r.id===id);
+const pagoOpts=()=>owner()?[["owner","Yo"],["esposa","Sofi"]]:[["esposa","Yo"],["owner","Mi pareja"]];
+const miPago=()=>owner()?"owner":"esposa";
+const quienL=p=>owner()?(p==="owner"?"Pagué yo":"Pagó Sofi"):(p==="esposa"?"Pagué yo":"Pagó mi pareja");
+const chk=async p=>{const {error}=await p;if(error)throw error};
+async function seq(fn){try{await fn();say("");await cargar();render();return true}catch(e){dbErr(e);return false}}
+const hoyS=()=>ymd(new Date());
+const byFecha=(a,b)=>b.fecha.localeCompare(a.fecha)||String(b.creado||"").localeCompare(String(a.creado||""));
+
+function costoLote(r){return D.sm.items.filter(x=>x.receta_id===r.id).reduce((s,it)=>{const i=ingBy(it.ingrediente_id);return s+(i?qtyIn(it.cantidad,it.unidad,i)*i.precio:0)},0)}
+const costoFrasco=r=>costoLote(r)/(r.rendimiento||1);
+function consumo(r,lotes){const o={};D.sm.items.filter(x=>x.receta_id===r.id).forEach(it=>{const i=ingBy(it.ingrediente_id);if(i)o[i.id]=(o[i.id]||0)+qtyIn(it.cantidad,it.unidad,i)*lotes});return o}
+
+async function cargarSM(){
+  const T=["sm_ingredientes","sm_compras","sm_gastos","sm_recetas","sm_receta_items","sm_producciones","sm_precios"];
+  const r=await Promise.all(T.map(t=>sb.from(t).select("*")));
+  const bad=r.find(x=>x.error);if(bad)return dbErr(bad.error);
+  const N=(a,ks)=>(a||[]).map(o=>{const c={...o};ks.forEach(k=>{if(c[k]!=null)c[k]=Number(c[k])});return c});
+  const byName=(a,b)=>a.nombre.localeCompare(b.nombre,"es");
+  D.sm.ing=N(r[0].data,["precio","existencia","minimo"]).sort(byName);
+  D.sm.compras=N(r[1].data,["total","cantidad"]);
+  D.sm.gastos=N(r[2].data,["monto"]);
+  D.sm.rec=N(r[3].data,["rendimiento","precio_venta","existencia"]).sort(byName);
+  D.sm.items=N(r[4].data,["cantidad"]);
+  D.sm.prod=N(r[5].data,["lotes","frascos","costo"]);
+  D.sm.precios=N(r[6].data,["precio"]);
+}
+
+/* --- operaciones que mantienen el inventario al dia --- */
+async function addCompra(c){
+  await chk(sb.from("sm_compras").insert(c));
+  if(c.ingrediente_id){
+    const ing=ingBy(c.ingrediente_id),q=qtyIn(c.cantidad,c.unidad,ing),precio=q>0?c.total/q:ing.precio;
+    await chk(sb.from("sm_ingredientes").update({existencia:ing.existencia+q,precio,proveedor:c.proveedor||ing.proveedor}).eq("id",ing.id));
+    await chk(sb.from("sm_precios").insert({ingrediente_id:ing.id,fecha:c.fecha,precio,proveedor:c.proveedor||null,origen:"compra"}));
+  }
+}
+async function editCompra(old,patch){
+  await chk(sb.from("sm_compras").update(patch).eq("id",old.id));
+  const dl={};
+  if(old.ingrediente_id){const i=ingBy(old.ingrediente_id);if(i)dl[i.id]=(dl[i.id]||0)-qtyIn(old.cantidad,old.unidad,i)}
+  if(patch.ingrediente_id){const i=ingBy(patch.ingrediente_id);if(i)dl[i.id]=(dl[i.id]||0)+qtyIn(patch.cantidad,patch.unidad,i)}
+  for(const id in dl){if(Math.abs(dl[id])>1e-9)await chk(sb.from("sm_ingredientes").update({existencia:ingBy(id).existencia+dl[id]}).eq("id",id))}
+}
+async function addProd(r,lotes,frascos,fecha,nota){
+  await chk(sb.from("sm_producciones").insert({fecha,receta_id:r.id,lotes,frascos,nota,costo:Math.round(costoLote(r)*lotes*100)/100}));
+  const dl=consumo(r,lotes);
+  for(const id in dl)await chk(sb.from("sm_ingredientes").update({existencia:ingBy(id).existencia-dl[id]}).eq("id",id));
+  await chk(sb.from("sm_recetas").update({existencia:r.existencia+frascos}).eq("id",r.id));
+}
+async function smDelete(k,id){
+  if(k==="sm_compras"){
+    const c=D.sm.compras.find(x=>x.id===id);
+    await chk(sb.from("sm_compras").delete().eq("id",id));
+    if(c&&c.ingrediente_id){const i=ingBy(c.ingrediente_id);if(i)await chk(sb.from("sm_ingredientes").update({existencia:i.existencia-qtyIn(c.cantidad,c.unidad,i)}).eq("id",i.id))}
+  }else if(k==="sm_prod"){
+    const p=D.sm.prod.find(x=>x.id===id),r=p&&recBy(p.receta_id);
+    await chk(sb.from("sm_producciones").delete().eq("id",id));
+    if(r){const dl=consumo(r,p.lotes);for(const iid in dl)await chk(sb.from("sm_ingredientes").update({existencia:ingBy(iid).existencia+dl[iid]}).eq("id",iid));
+      await chk(sb.from("sm_recetas").update({existencia:r.existencia-p.frascos}).eq("id",r.id))}
+  }else await chk(sb.from(TABLA[k]).delete().eq("id",id));
+}
+
+/* --- vistas --- */
+const formaOpts=sel=>topt(FORMA_OPTS,sel||"");
+const rowGasto=g=>`<div class="item s2"><div class="n">${esc(g.concepto)}<div class="mut">${esc(g.categoria||"")} · ${fd(g.fecha)} · ${quienL(g.pago)}${g.forma?" · "+esc(g.forma):""}${g.saldado?" · saldado":""}</div></div><span class="num">${fmt(g.monto)}</span><button class="x" data-edit="sm_gastos" data-id="${esc(g.id)}" aria-label="Editar">✎</button></div>`;
+const rowCompra=c=>{const i=c.ingrediente_id&&ingBy(c.ingrediente_id);
+  const pu=i&&c.cantidad>0?` · ${fmt4(c.total/qtyIn(c.cantidad,c.unidad,i))} por ${i.unidad}`:"";
+  return `<div class="item s2"><div class="n">${esc(c.concepto)}<div class="mut">${c.cantidad?fq(c.cantidad)+" "+esc(c.unidad||"")+" · ":""}${c.proveedor?esc(c.proveedor)+" · ":""}${fd(c.fecha)} · ${quienL(c.pago)}${c.forma?" · "+esc(c.forma):""}${c.saldado?" · saldado":""}${pu}</div></div><span class="num">${fmt(c.total)}</span><button class="x" data-edit="sm_compras" data-id="${esc(c.id)}" aria-label="Editar">✎</button></div>`};
+
+function vSResumen(){
+  const S=D.sm;
+  const todos=[...S.gastos.map(x=>({...x,m:x.monto})),...S.compras.map(x=>({...x,m:x.total}))];
+  const sm=a=>a.reduce((s,x)=>s+x.m,0);
+  const mes=todos.filter(x=>x.fecha&&x.fecha.startsWith(ymNow()));
+  const pO=sm(todos.filter(x=>x.pago==="owner")),pE=sm(todos.filter(x=>x.pago==="esposa"));
+  const ab=todos.filter(x=>!x.saldado);
+  const neto=Math.round((sm(ab.filter(x=>x.pago==="owner"))-sm(ab.filter(x=>x.pago==="esposa")))/2*100)/100;
+  const o=owner();
+  let titulo,monto="";
+  if(Math.abs(neto)<0.01)titulo="Cuentas al corriente";
+  else{monto=fmt(Math.abs(neto));titulo=o?(neto>0?"Sofi te debe":"Le debes a Sofi"):(neto>0?"Le debes a tu pareja":"Tu pareja te debe")}
+  const porSocio=o?`Yo ${fmt(pO)} · Sofi ${fmt(pE)}`:`Yo ${fmt(pE)} · Mi pareja ${fmt(pO)}`;
+  const bajos=S.ing.filter(i=>(i.minimo>0&&i.existencia<=i.minimo)||i.existencia<0);
+  const valor=S.ing.reduce((s,i)=>s+Math.max(0,i.existencia)*i.precio,0);
+  const saldar=ab.length?`<div style="margin-top:12px">${FECHA_OK_SM()}
+    ${armed?`<div class="msg err" style="margin:10px 0">Se marcarán ${ab.length} movimientos como saldados. Toca "Sí, saldar cuenta" para confirmar.</div>`:""}
+    <div class="actions" style="margin-top:10px"><button class="pri" data-act="smsaldar">${armed?"Sí, saldar cuenta":"Saldar cuenta"}</button>${armed?'<button data-act="canc2">Cancelar</button>':""}</div></div>`:"";
+  return `<section class="card"><div class="mut">Invertido en la salsa macha</div><div class="total">${fmt(sm(todos))}</div>
+   <div class="mut">Este mes: <b>${fmt(sm(mes))}</b> · ${porSocio}</div></section>
+  <section class="card"><div class="mut">Cuenta entre socios (50% y 50%)</div><div class="big" style="margin-top:2px">${titulo}</div>${monto?`<div class="total">${monto}</div>`:""}
+   <div class="mut" style="margin-top:6px">${ab.length?`${ab.length} movimientos sin saldar`:"No hay movimientos pendientes de saldar."}</div>${saldar}</section>
+  <section class="card"><div class="row" style="margin-bottom:4px"><h2>Por reabastecer</h2><span class="${bajos.length?"warn":"ok"}">${bajos.length?bajos.length+" por surtir":"Todo en orden"}</span></div>
+   ${bajos.map(i=>`<div class="item s2"><div class="n">${esc(i.nombre)}<div class="mut ${i.existencia<0?"warn":""}">Existencia ${fq(i.existencia)} ${i.unidad} · mínimo ${fq(i.minimo)} ${i.unidad}</div></div><span class="num">${fmt4(i.precio)}</span><button data-go="s_compras">Comprar</button></div>`).join("")||'<div class="empty">Ninguna materia prima está por debajo de su mínimo.</div>'}
+   <div class="mut" style="margin-top:8px">Valor del inventario de materia prima: <b>${fmt(valor)}</b></div></section>
+  <section class="card"><h2 style="margin-bottom:4px">Costo por frasco</h2>
+   ${S.rec.map(r=>{const cf=costoFrasco(r),pv=r.precio_venta,g=pv>0?pv-cf:null;return `<div class="item s2"><div class="n">${esc(r.nombre)}<div class="mut">${pv>0?`Venta ${fmt(pv)} · ganancia ${fmt(g)} (${Math.round(g/pv*100)}%)`:"Sin precio de venta"} · ${fq(r.existencia)} frascos en existencia</div></div><span class="num">${fmt(cf)}</span><button data-rec="${esc(r.id)}">Abrir</button></div>`}).join("")||'<div class="empty">Aún no hay recetas. Crea la primera en la pestaña Recetas.</div>'}</section>`;
+}
+const FECHA_OK_SM=()=>`<form onsubmit="return false"><label>Fecha en que se saldó<input id="s-fecha" type="date" value="${esc(sfecha||hoyS())}"></label>
+  <label>Forma de pago<select id="s-forma">${topt([["Efectivo","Efectivo"],["Transferencia","Transferencia"],["Otro","Otro"]],sforma)}</select></label>
+  <label class="full">Observaciones<input id="s-obs" maxlength="120" value="${esc(sobs)}" placeholder="Ej. transferencia SPEI, referencia 123"></label></form>`;
+
+function vSGastos(){
+  const L=D.sm.gastos.filter(g=>g.fecha.startsWith(ym())).sort(byFecha);
+  return `<section class="card"><h2 style="margin-bottom:12px">Nuevo gasto del proyecto</h2>
+   <form id="sg"><label>Monto<input id="g-amt" type="number" min="0.01" step="any" inputmode="decimal" required placeholder="0,00"></label>
+   <label>Quién pagó<select id="g-pago">${topt(pagoOpts(),miPago())}</select></label>
+   <label class="full">Qué se pagó<input id="g-concepto" required maxlength="80" placeholder="Ej. frascos de vidrio, etiquetas, flete"></label>
+   <label>Categoría<select id="g-cat">${topt(CAT_OPTS,"Otro")}</select></label>
+   <label>Forma de pago<select id="g-forma">${formaOpts("")}</select></label>
+   <label>Fecha<input id="g-date" type="date" required value="${hoyS()}"></label>
+   <label class="full">Nota (opcional)<input id="g-note" maxlength="120"></label>
+   <button class="pri full" type="submit">Agregar gasto</button></form></section>
+  <section class="card"><h2 style="margin-bottom:4px">Gastos del mes · ${fmt(L.reduce((s,g)=>s+g.monto,0))}</h2>${L.length?L.map(rowGasto).join(""):'<div class="empty">No hay gastos en este mes.</div>'}</section>`;
+}
+
+function vSCompras(){
+  const L=D.sm.compras.filter(c=>c.fecha.startsWith(ym())).sort(byFecha);
+  const ings=D.sm.ing,i0=ings[0];
+  const unis=i0?unidadesDe(i0.unidad).map(u=>`<option${u===i0.unidad?" selected":""}>${u}</option>`).join(""):"";
+  return `<section class="card"><h2 style="margin-bottom:4px">Nueva compra</h2>
+   <div class="mut" style="margin-bottom:12px">Si es materia prima, suma al inventario y actualiza su precio.</div>
+   <form id="sc"><label class="full">Qué compraste<select id="c-ing">${ings.map((i,n)=>`<option value="${esc(i.id)}"${n===0?" selected":""}>${esc(i.nombre)}</option>`).join("")}<option value=""${ings.length?"":" selected"}>Otra cosa (sin inventario)</option></select></label>
+   <label class="full" id="c-conl" ${ings.length?"hidden":""}>Concepto<input id="c-concepto" maxlength="80" placeholder="Ej. gas, bolsas"></label>
+   <label id="c-cantl" ${ings.length?"":"hidden"}>Cantidad<input id="c-cant" type="number" min="0" step="any" inputmode="decimal"></label>
+   <label id="c-unil" ${ings.length?"":"hidden"}>Unidad<select id="c-uni">${unis}</select></label>
+   <label>Total pagado<input id="c-total" type="number" min="0.01" step="any" inputmode="decimal" required placeholder="0,00"></label>
+   <label>Proveedor<input id="c-prov" maxlength="60" value="${esc(i0&&i0.proveedor||"")}"></label>
+   <label>Quién pagó<select id="c-pago">${topt(pagoOpts(),miPago())}</select></label>
+   <label>Forma de pago<select id="c-forma">${formaOpts("")}</select></label>
+   <label>Fecha<input id="c-date" type="date" required value="${hoyS()}"></label>
+   <label class="full">Nota (opcional)<input id="c-note" maxlength="120"></label>
+   <button class="pri full" type="submit">Registrar compra</button></form>
+   ${ings.length?"":'<div class="mut" style="margin-top:10px">Para sumar al inventario, primero da de alta la materia prima en la pestaña Inventario.</div>'}</section>
+  <section class="card"><h2 style="margin-bottom:4px">Compras del mes · ${fmt(L.reduce((s,c)=>s+c.total,0))}</h2>${L.length?L.map(rowCompra).join(""):'<div class="empty">No hay compras en este mes.</div>'}</section>`;
+}
+
+function vSInv(){
+  const S=D.sm,valor=S.ing.reduce((s,i)=>s+Math.max(0,i.existencia)*i.precio,0);
+  const lista=S.ing.map(i=>{const bajo=(i.minimo>0&&i.existencia<=i.minimo)||i.existencia<0;
+    return `<div class="item s2"><div class="n">${esc(i.nombre)}<div class="mut ${bajo?"warn":""}">Existencia ${fq(i.existencia)} ${i.unidad}${i.minimo>0?" · mínimo "+fq(i.minimo):""}</div><div class="mut">${fmt4(i.precio)} por ${i.unidad}${i.proveedor?" · "+esc(i.proveedor):""}</div></div><span class="num">${fmt(Math.max(0,i.existencia)*i.precio)}</span><button class="x" data-edit="sm_ing" data-id="${esc(i.id)}" aria-label="Editar">✎</button></div>`}).join("")||'<div class="empty">Aún no hay materia prima. Agrega la primera abajo.</div>';
+  return `<section class="card"><div class="mut">Valor del inventario de materia prima</div><div class="total">${fmt(valor)}</div></section>
+  <section class="card"><h2 style="margin-bottom:4px">Materia prima</h2>${lista}</section>
+  <section class="card"><h2 style="margin-bottom:4px">Producto terminado</h2>
+   ${S.rec.map(r=>`<div class="item s2"><div class="n">${esc(r.nombre)}<div class="mut">${r.frasco?esc(r.frasco)+" · ":""}costo ${fmt(costoFrasco(r))} por frasco</div></div><span class="num">${fq(r.existencia)}</span><button data-rec="${esc(r.id)}">Producir</button></div>`).join("")||'<div class="empty">Se llena al registrar producciones en Recetas.</div>'}</section>
+  <section class="card"><h2 style="margin-bottom:12px">Nueva materia prima</h2>
+   <form id="si"><label class="full">Nombre<input id="i-name" required maxlength="60" placeholder="Ej. chile morita, ajonjolí, aceite"></label>
+   <label>Se compra por<select id="i-uni">${topt(UNI_OPTS,"kg")}</select></label>
+   <label>Precio por esa unidad<input id="i-precio" type="number" min="0" step="any" inputmode="decimal" value="0"></label>
+   <label>Existencia actual<input id="i-exist" type="number" step="any" inputmode="decimal" value="0"></label>
+   <label>Avisar cuando baje de<input id="i-min" type="number" min="0" step="any" inputmode="decimal" value="0"></label>
+   <label class="full">Proveedor (opcional)<input id="i-prov" maxlength="60"></label>
+   <button class="pri full" type="submit">Agregar materia prima</button></form></section>`;
+}
+
+function vSRec(){
+  const lista=D.sm.rec.map(r=>`<div class="item s2"><div class="n">${esc(r.nombre)}<div class="mut">Rinde ${fq(r.rendimiento)} frascos${r.frasco?" de "+esc(r.frasco):""} · ${fq(r.existencia)} en existencia</div></div><span class="num">${fmt(costoFrasco(r))}</span><button data-rec="${esc(r.id)}">Abrir</button></div>`).join("")||'<div class="empty">Aún no hay recetas.</div>';
+  return `<section class="card"><h2 style="margin-bottom:4px">Recetas · costo por frasco</h2>${lista}</section>
+  <section class="card"><h2 style="margin-bottom:12px">Nueva receta</h2>
+   <form id="sr"><label class="full">Nombre<input id="r-name" required maxlength="60" placeholder="Ej. Salsa macha clásica"></label>
+   <label>Rinde (frascos por lote)<input id="r-rend" type="number" min="0.001" step="any" inputmode="decimal" required value="10"></label>
+   <label>Tamaño del frasco<input id="r-frasco" maxlength="30" placeholder="Ej. 250 g"></label>
+   <label>Precio de venta por frasco<input id="r-pv" type="number" min="0" step="any" inputmode="decimal" value="0"></label>
+   <button class="pri full" type="submit">Crear receta</button></form></section>`;
+}
+
+function vRecDet(){
+  const r=recBy(rdet);if(!r){rdet=null;return vSRec()}
+  const S=D.sm,items=S.items.filter(x=>x.receta_id===r.id),cl=costoLote(r),cf=costoFrasco(r),pv=r.precio_venta;
+  const itemsH=items.map(it=>{const i=ingBy(it.ingrediente_id);const c=i?qtyIn(it.cantidad,it.unidad,i)*i.precio:0;
+    return `<div class="item s2"><div class="n">${esc(i?i.nombre:"(eliminada)")}<div class="mut">${fq(it.cantidad)} ${it.unidad}${i?" × "+fmt4(i.precio)+" por "+i.unidad:""}</div></div><span class="num">${fmt(c)}</span><button class="x" data-edit="sm_item" data-id="${esc(it.id)}" aria-label="Editar">✎</button></div>`}).join("")||'<div class="empty">Esta receta aún no tiene ingredientes.</div>';
+  const i0=S.ing[0];
+  const prods=S.prod.filter(p=>p.receta_id===r.id).sort(byFecha).slice(0,8).map(p=>`<div class="item s2"><div class="n">${fq(p.lotes)} ${p.lotes===1?"lote":"lotes"} · ${fq(p.frascos)} frascos<div class="mut">${fd(p.fecha)} · costo ${fmt(p.costo)}${p.nota?" · "+esc(p.nota):""}</div></div><span class="num">${fmt(p.frascos>0?p.costo/p.frascos:0)}</span><button class="x" data-edit="sm_prod" data-id="${esc(p.id)}" aria-label="Editar">✎</button></div>`).join("");
+  return `<section class="card"><div class="row"><button data-act="recback">‹ Recetas</button><button data-edit="sm_rec" data-id="${esc(r.id)}">Editar receta</button></div>
+   <h2 style="margin:12px 0 2px;font-size:22px">${esc(r.nombre)}</h2><div class="mut">Rinde ${fq(r.rendimiento)} frascos${r.frasco?" de "+esc(r.frasco):""}</div>
+   <div class="row" style="margin-top:12px"><span>Costo por lote</span><b class="num">${fmt(cl)}</b></div>
+   <div class="row"><span>Costo por frasco</span><b class="num">${fmt(cf)}</b></div>
+   ${pv>0?`<div class="row"><span>Precio de venta</span><b class="num">${fmt(pv)}</b></div><div class="row"><span>Ganancia por frasco</span><b class="num ${pv-cf<0?"warn":"ok"}">${fmt(pv-cf)} (${Math.round((pv-cf)/pv*100)}%)</b></div>`:'<div class="mut" style="margin-top:6px">Agrega el precio de venta con "Editar receta" para ver la ganancia.</div>'}
+   <div class="row"><span>Frascos en existencia</span><b class="num">${fq(r.existencia)}</b></div></section>
+  <section class="card"><h2 style="margin-bottom:4px">Ingredientes por lote</h2>${itemsH}</section>
+  <section class="card"><h2 style="margin-bottom:12px">Agregar ingrediente</h2>
+   ${i0?`<form id="sri"><label class="full">Materia prima<select id="ri-ing">${S.ing.map((i,n)=>`<option value="${esc(i.id)}"${n===0?" selected":""}>${esc(i.nombre)}</option>`).join("")}</select></label>
+   <label>Cantidad por lote<input id="ri-cant" type="number" min="0.0001" step="any" inputmode="decimal" required></label>
+   <label>Unidad<select id="ri-uni">${unidadesDe(i0.unidad).map(u=>`<option${u===i0.unidad?" selected":""}>${u}</option>`).join("")}</select></label>
+   <button class="pri full" type="submit">Agregar a la receta</button></form>`:'<div class="empty">Primero da de alta la materia prima en Inventario.</div>'}</section>
+  <section class="card"><h2 style="margin-bottom:4px">Registrar producción</h2><div class="mut" style="margin-bottom:12px">Descuenta los ingredientes del inventario y suma los frascos terminados.</div>
+   <form id="sp"><label>Lotes hechos<input id="p-lotes" type="number" min="0.001" step="any" inputmode="decimal" required value="1"></label>
+   <label>Frascos obtenidos<input id="p-frascos" type="number" min="0" step="any" inputmode="decimal" required value="${r.rendimiento}"></label>
+   <label>Fecha<input id="p-date" type="date" required value="${hoyS()}"></label>
+   <label>Nota (opcional)<input id="p-note" maxlength="120"></label>
+   <button class="pri full" type="submit" ${items.length?"":"disabled"}>Registrar producción</button></form></section>
+  ${prods?`<section class="card"><h2 style="margin-bottom:4px">Producciones recientes</h2>${prods}</section>`:""}`;
+}
+
+function vSPrecios(){
+  const S=D.sm;
+  const hist=id=>S.precios.filter(p=>p.ingrediente_id===id).sort((a,b)=>a.fecha.localeCompare(b.fecha)||String(a.creado).localeCompare(String(b.creado)));
+  const lista=S.ing.map(i=>{const h=hist(i.id),u=h[h.length-1],pr=h[h.length-2];
+    let cambio="";if(u&&pr&&pr.precio>0){const pc=(u.precio-pr.precio)/pr.precio*100;if(Math.abs(pc)>=0.5)cambio=` · <b class="${pc>0?"warn":"ok"}">${pc>0?"▲":"▼"} ${Math.abs(Math.round(pc*10)/10)}%</b>`}
+    return `<div class="item s2"><div class="n">${esc(i.nombre)}<div class="mut">${i.proveedor?esc(i.proveedor)+" · ":""}${u?"actualizado "+fd(u.fecha):"sin historial"}${cambio}</div></div><span class="num">${fmt4(i.precio)}<span class="mut"> /${i.unidad}</span></span><button class="x" data-edit="sm_ing" data-id="${esc(i.id)}" aria-label="Editar">✎</button></div>`}).join("")||'<div class="empty">Aún no hay materia prima.</div>';
+  const i0=S.ing[0];
+  return `<section class="card"><h2 style="margin-bottom:4px">Precios de materia prima</h2><div class="mut" style="margin-bottom:4px">Cada compra de materia prima actualiza su precio solo.</div>${lista}</section>
+  ${i0?`<section class="card"><h2 style="margin-bottom:12px">Actualizar un precio</h2>
+   <form id="spr"><label class="full">Materia prima<select id="pr-ing">${S.ing.map((i,n)=>`<option value="${esc(i.id)}"${n===0?" selected":""}>${esc(i.nombre)}</option>`).join("")}</select></label>
+   <label>Nuevo precio por unidad<input id="pr-precio" type="number" min="0" step="any" inputmode="decimal" required value="${i0.precio}"></label>
+   <label>Proveedor (opcional)<input id="pr-prov" maxlength="60" value="${esc(i0.proveedor||"")}"></label>
+   <button class="pri full" type="submit">Guardar precio</button></form></section>`:""}`;
+}
+
+/* --- pantallas de edicion --- */
+function smEditFields(k,row){
+  const saldo=`<label class="full" style="flex-direction:row;align-items:center;gap:10px"><input id="e-saldado" type="checkbox" ${row.saldado?"checked":""}> Ya se saldó este movimiento</label>
+    <label>Fecha en que se saldó<input id="e-sfecha" type="date" value="${esc(row.saldado_fecha||hoyS())}"></label>
+    <label>Forma de pago<select id="e-sforma">${formaOpts(row.saldado_forma)}</select></label>
+    <label class="full">Observaciones<input id="e-sobs" maxlength="120" value="${esc(row.saldado_obs||"")}"></label>`;
+  if(k==="sm_gastos")return{titulo:"gasto del proyecto",campos:`<label>Monto<input id="e-amt" type="number" min="0.01" step="any" inputmode="decimal" required value="${row.monto}"></label>
+    <label>Quién pagó<select id="e-pago">${topt(pagoOpts(),row.pago)}</select></label>
+    <label class="full">Qué se pagó<input id="e-concepto" required maxlength="80" value="${esc(row.concepto)}"></label>
+    <label>Categoría<select id="e-cat">${topt(CAT_OPTS,row.categoria||"Otro")}</select></label>
+    <label>Forma de pago<select id="e-forma">${formaOpts(row.forma)}</select></label>
+    <label>Fecha<input id="e-date" type="date" required value="${esc(row.fecha)}"></label>
+    <label class="full">Nota<input id="e-note" maxlength="120" value="${esc(row.nota||"")}"></label>${saldo}`};
+  if(k==="sm_compras")return{titulo:"compra",campos:`<label class="full">Materia prima<select id="e-ing"><option value="">Otra cosa (sin inventario)</option>${D.sm.ing.map(i=>`<option value="${esc(i.id)}"${i.id===row.ingrediente_id?" selected":""}>${esc(i.nombre)}</option>`).join("")}</select></label>
+    <label class="full">Concepto (si no es materia prima)<input id="e-concepto" maxlength="80" value="${esc(row.ingrediente_id?"":row.concepto)}"></label>
+    <label>Cantidad<input id="e-cant" type="number" min="0" step="any" inputmode="decimal" value="${row.cantidad==null?"":row.cantidad}"></label>
+    <label>Unidad<select id="e-uni">${topt(UNI_OPTS,row.unidad||"kg")}</select></label>
+    <label>Total pagado<input id="e-amt" type="number" min="0.01" step="any" inputmode="decimal" required value="${row.total}"></label>
+    <label>Proveedor<input id="e-prov" maxlength="60" value="${esc(row.proveedor||"")}"></label>
+    <label>Quién pagó<select id="e-pago">${topt(pagoOpts(),row.pago)}</select></label>
+    <label>Forma de pago<select id="e-forma">${formaOpts(row.forma)}</select></label>
+    <label>Fecha<input id="e-date" type="date" required value="${esc(row.fecha)}"></label>
+    <label class="full">Nota<input id="e-note" maxlength="120" value="${esc(row.nota||"")}"></label>${saldo}
+    <div class="full mut">Al cambiar la cantidad o eliminar la compra, el inventario se ajusta solo. El precio de la materia prima no cambia.</div>`};
+  if(k==="sm_ing")return{titulo:"materia prima",campos:`<label class="full">Nombre<input id="e-name" required maxlength="60" value="${esc(row.nombre)}"></label>
+    <label>Se compra por<select id="e-uni">${topt(UNI_OPTS,row.unidad)}</select></label>
+    <label>Precio por esa unidad<input id="e-precio" type="number" min="0" step="any" inputmode="decimal" value="${row.precio}"></label>
+    <label>Existencia actual<input id="e-exist" type="number" step="any" inputmode="decimal" value="${row.existencia}"></label>
+    <label>Avisar cuando baje de<input id="e-min" type="number" min="0" step="any" inputmode="decimal" value="${row.minimo}"></label>
+    <label class="full">Proveedor<input id="e-prov" maxlength="60" value="${esc(row.proveedor||"")}"></label>
+    <div class="full mut">Cambia la existencia aquí cuando cuentes tu inventario. Si cambias la unidad, revisa también las recetas.</div>`};
+  if(k==="sm_rec")return{titulo:"receta",campos:`<label class="full">Nombre<input id="e-name" required maxlength="60" value="${esc(row.nombre)}"></label>
+    <label>Rinde (frascos por lote)<input id="e-rend" type="number" min="0.001" step="any" inputmode="decimal" required value="${row.rendimiento}"></label>
+    <label>Tamaño del frasco<input id="e-frasco" maxlength="30" value="${esc(row.frasco||"")}"></label>
+    <label>Precio de venta por frasco<input id="e-pv" type="number" min="0" step="any" inputmode="decimal" value="${row.precio_venta}"></label>
+    <label>Frascos en existencia<input id="e-exist" type="number" step="any" inputmode="decimal" value="${row.existencia}"></label>
+    <label class="full">Notas<input id="e-note" maxlength="200" value="${esc(row.notas||"")}"></label>`};
+  if(k==="sm_item")return{titulo:"ingrediente de la receta",campos:`<label class="full">Materia prima<select id="e-ing">${D.sm.ing.map(i=>`<option value="${esc(i.id)}"${i.id===row.ingrediente_id?" selected":""}>${esc(i.nombre)}</option>`).join("")}</select></label>
+    <label>Cantidad por lote<input id="e-cant" type="number" min="0.0001" step="any" inputmode="decimal" required value="${row.cantidad}"></label>
+    <label>Unidad<select id="e-uni">${topt(UNI_OPTS,row.unidad)}</select></label>`};
+  return{titulo:"producción",campos:`<label>Fecha<input id="e-date" type="date" required value="${esc(row.fecha)}"></label>
+    <label class="full">Nota<input id="e-note" maxlength="120" value="${esc(row.nota||"")}"></label>
+    <div class="full mut">Se produjeron ${fq(row.frascos)} frascos. Si eliminas este registro, los ingredientes vuelven al inventario y se restan los frascos.</div>`};
+}
+function smEditSubmit(k,id){
+  const g=x=>$(x)?$(x).value:"",n=x=>parseFloat(g(x)),t=x=>g(x).trim()||null;
+  let fn;
+  if(k==="sm_gastos"||k==="sm_compras"){
+    const sal=$("e-saldado").checked;
+    const base={fecha:g("e-date"),pago:g("e-pago"),forma:t("e-forma"),nota:t("e-note"),saldado:sal,saldado_fecha:sal?(g("e-sfecha")||hoyS()):null,saldado_forma:sal?t("e-sforma"):null,saldado_obs:sal?t("e-sobs"):null};
+    if(k==="sm_gastos"){
+      const monto=n("e-amt"),concepto=g("e-concepto").trim();if(!(monto>0)||!concepto)return;
+      const patch={...base,monto,concepto,categoria:g("e-cat")};
+      fn=()=>chk(sb.from("sm_gastos").update(patch).eq("id",id));
+    }else{
+      const old=D.sm.compras.find(x=>x.id===id),total=n("e-amt");if(!old||!(total>0))return;
+      const ingId=g("e-ing")||null,ing=ingId?ingBy(ingId):null,cant=g("e-cant")===""?null:n("e-cant");
+      const concepto=ing?ing.nombre:g("e-concepto").trim();
+      if(!concepto){say("Escribe qué compraste.",true);return}
+      if(ing&&!(cant>0)){say("Escribe la cantidad comprada.",true);return}
+      const patch={...base,total,ingrediente_id:ingId,concepto,cantidad:cant,unidad:(ing||cant)?g("e-uni"):null,proveedor:t("e-prov")};
+      fn=()=>editCompra(old,patch);
+    }
+  }else if(k==="sm_ing"){
+    const old=ingBy(id),precio=n("e-precio")||0,nombre=g("e-name").trim();if(!old||!nombre)return;
+    const patch={nombre,unidad:g("e-uni"),precio,existencia:n("e-exist")||0,minimo:n("e-min")||0,proveedor:t("e-prov")};
+    fn=async()=>{await chk(sb.from("sm_ingredientes").update(patch).eq("id",id));
+      if(Math.abs(precio-old.precio)>1e-9)await chk(sb.from("sm_precios").insert({ingrediente_id:id,fecha:hoyS(),precio,proveedor:patch.proveedor,origen:"manual"}))};
+  }else if(k==="sm_rec"){
+    const nombre=g("e-name").trim(),rend=n("e-rend");if(!nombre||!(rend>0))return;
+    const patch={nombre,rendimiento:rend,frasco:t("e-frasco"),precio_venta:n("e-pv")||0,existencia:n("e-exist")||0,notas:t("e-note")};
+    fn=()=>chk(sb.from("sm_recetas").update(patch).eq("id",id));
+  }else if(k==="sm_item"){
+    const cant=n("e-cant");if(!(cant>0))return;
+    const patch={ingrediente_id:g("e-ing"),cantidad:cant,unidad:g("e-uni")};
+    fn=()=>chk(sb.from("sm_receta_items").update(patch).eq("id",id));
+  }else{
+    const patch={fecha:g("e-date"),nota:t("e-note")};
+    fn=()=>chk(sb.from("sm_producciones").update(patch).eq("id",id));
+  }
+  seq(fn).then(ok=>{if(ok){edit=null;armed=false;render();say("Cambios guardados.")}});
+}
+
+/* --- formularios de alta --- */
+function smSubmit(f){
+  const g=x=>$(x)?$(x).value:"",n=x=>parseFloat(g(x)),t=x=>g(x).trim()||null;
+  if(f==="sg"){
+    const monto=n("g-amt"),concepto=g("g-concepto").trim();if(!(monto>0)||!concepto)return true;
+    seq(()=>chk(sb.from("sm_gastos").insert({fecha:g("g-date"),concepto,categoria:g("g-cat"),monto,pago:g("g-pago"),forma:t("g-forma"),nota:t("g-note")}))).then(ok=>{if(ok)say("Gasto agregado.")});
+    return true;
+  }
+  if(f==="sc"){
+    const ingId=g("c-ing")||null,ing=ingId?ingBy(ingId):null,total=n("c-total"),cant=n("c-cant");
+    if(!(total>0))return true;
+    if(ing&&!(cant>0)){say("Escribe la cantidad comprada.",true);return true}
+    const concepto=ing?ing.nombre:g("c-concepto").trim();
+    if(!concepto){say("Escribe qué compraste.",true);return true}
+    const c={fecha:g("c-date"),ingrediente_id:ingId,concepto,cantidad:ing?cant:null,unidad:ing?g("c-uni"):null,total,proveedor:t("c-prov"),pago:g("c-pago"),forma:t("c-forma"),nota:t("c-note")};
+    seq(()=>addCompra(c)).then(ok=>{if(ok)say("Compra registrada."+(ing?" Inventario y precio actualizados.":""))});
+    return true;
+  }
+  if(f==="si"){
+    const nombre=g("i-name").trim();if(!nombre)return true;
+    const precio=n("i-precio")||0,o={nombre,unidad:g("i-uni"),precio,existencia:n("i-exist")||0,minimo:n("i-min")||0,proveedor:t("i-prov")};
+    seq(async()=>{const {data,error}=await sb.from("sm_ingredientes").insert(o).select("id").single();if(error)throw error;
+      if(precio>0)await chk(sb.from("sm_precios").insert({ingrediente_id:data.id,fecha:hoyS(),precio,proveedor:o.proveedor,origen:"manual"}))}).then(ok=>{if(ok)say("Materia prima agregada.")});
+    return true;
+  }
+  if(f==="sr"){
+    const nombre=g("r-name").trim(),rend=n("r-rend");if(!nombre||!(rend>0))return true;
+    seq(async()=>{const {data,error}=await sb.from("sm_recetas").insert({nombre,rendimiento:rend,frasco:t("r-frasco"),precio_venta:n("r-pv")||0}).select("id").single();if(error)throw error;rdet=data.id}).then(ok=>{if(ok)say("Receta creada. Agrega sus ingredientes.")});
+    return true;
+  }
+  if(f==="sri"){
+    const cant=n("ri-cant");if(!(cant>0)||!rdet)return true;
+    seq(()=>chk(sb.from("sm_receta_items").insert({receta_id:rdet,ingrediente_id:g("ri-ing"),cantidad:cant,unidad:g("ri-uni")}))).then(ok=>{if(ok)say("Ingrediente agregado.")});
+    return true;
+  }
+  if(f==="sp"){
+    const r=recBy(rdet),lotes=n("p-lotes"),frascos=n("p-frascos");if(!r||!(lotes>0)||!(frascos>=0))return true;
+    seq(()=>addProd(r,lotes,frascos,g("p-date"),t("p-note"))).then(ok=>{if(ok)say("Producción registrada. Inventario actualizado.")});
+    return true;
+  }
+  if(f==="spr"){
+    const i=ingBy(g("pr-ing")),precio=n("pr-precio");if(!i||isNaN(precio))return true;
+    seq(async()=>{await chk(sb.from("sm_ingredientes").update({precio,proveedor:t("pr-prov")||i.proveedor}).eq("id",i.id));
+      await chk(sb.from("sm_precios").insert({ingrediente_id:i.id,fecha:hoyS(),precio,proveedor:t("pr-prov"),origen:"manual"}))}).then(ok=>{if(ok)say("Precio actualizado.")});
+    return true;
+  }
+  return false;
+}
+function smChange(t){
+  if(t.id==="c-ing"){
+    const ing=ingBy(t.value),sel=$("c-uni");
+    sel.innerHTML=ing?unidadesDe(ing.unidad).map(u=>`<option${u===ing.unidad?" selected":""}>${u}</option>`).join(""):"";
+    $("c-conl").hidden=!!ing;$("c-cantl").hidden=!ing;$("c-unil").hidden=!ing;
+    $("c-prov").value=ing&&ing.proveedor?ing.proveedor:"";
+  }
+  if(t.id==="ri-ing"){const ing=ingBy(t.value);$("ri-uni").innerHTML=ing?unidadesDe(ing.unidad).map(u=>`<option${u===ing.unidad?" selected":""}>${u}</option>`).join(""):""}
+  if(t.id==="pr-ing"){const ing=ingBy(t.value);if(ing){$("pr-precio").value=ing.precio;$("pr-prov").value=ing.proveedor||""}}
+  if(t.id==="p-lotes"){const r=recBy(rdet),l=parseFloat(t.value);if(r&&l>0)$("p-frascos").value=Math.round(l*r.rendimiento*1000)/1000}
+}
+function smClick(t,a){
+  if(t.dataset&&t.dataset.modo){
+    modo=t.dataset.modo;try{localStorage.setItem("modo",modo)}catch(e){}
+    tab=modo==="sm"?"s_resumen":(owner()?"resumen":"compartidos");edit=null;rdet=null;armed=false;say("");
+    drawTabs();render();window.scrollTo(0,0);return true;
+  }
+  if(t.dataset&&t.dataset.rec){tab="s_rec";rdet=t.dataset.rec;edit=null;say("");render();window.scrollTo(0,0);return true}
+  if(a==="recback"){rdet=null;render();return true}
+  if(a==="smsaldar"){
+    if(!armed){sfecha=$("s-fecha")?$("s-fecha").value:"";sforma=$("s-forma")?$("s-forma").value:"Efectivo";sobs=$("s-obs")?$("s-obs").value.trim():"";armed=true;render();return true}
+    const fs=sfecha||hoyS(),upd={saldado:true,saldado_fecha:fs,saldado_forma:sforma||null,saldado_obs:sobs||null};
+    seq(async()=>{await chk(sb.from("sm_gastos").update(upd).eq("saldado",false));await chk(sb.from("sm_compras").update(upd).eq("saldado",false))})
+      .then(ok=>{armed=false;sfecha="";sforma="Efectivo";sobs="";render();if(ok)say("Cuenta saldada el "+fd(fs)+".")});
+    return true;
+  }
+  return false;
+}
+
+const TABS_S=[["s_resumen","Resumen"],["s_gastos","Gastos"],["s_compras","Compras"],["s_inv","Inventario"],["s_rec","Recetas"],["s_precios","Precios"],["salir","Salir"]];
+function rowOf(k,id){const S=D.sm;return({gastos:D.gastos,fijos:D.fijos,pagos:D.pagos,sm_gastos:S.gastos,sm_compras:S.compras,sm_ing:S.ing,sm_rec:S.rec,sm_item:S.items,sm_prod:S.prod}[k]||[]).find(x=>x.id===id)}
 const TABS_O=[["resumen","Resumen"],["gastos","Gastos"],["compartidos","Compartidos"],["fijos","Fijos"],["hipoteca","Hipoteca"],["acceso","Acceso"]];
 const TABS_E=[["compartidos","Compartidos"],["hipoteca","Hipoteca"],["salir","Salir"]];
+function drawTabs(){
+  const T=modo==="sm"?TABS_S:(owner()?TABS_O:TABS_E);
+  $("tabs").innerHTML=T.map(([k,l])=>`<button role="tab" data-tab="${k}">${l}</button>`).join("");
+}
 async function shell(){
   me=(await sb.auth.getUser()).data.user.id;
-  $("app").innerHTML=`<div class="top"><h1>Mis Gastos</h1><div class="month" id="mnav"><button id="prev" aria-label="Mes anterior">‹</button><strong id="mlabel" style="min-width:120px;text-align:center"></strong><button id="next" aria-label="Mes siguiente">›</button></div></div>
+  $("app").innerHTML=`<div class="top"><h1 id="ttl">Mis Gastos</h1><div class="month" id="mnav"><button id="prev" aria-label="Mes anterior">‹</button><strong id="mlabel" style="min-width:120px;text-align:center"></strong><button id="next" aria-label="Mes siguiente">›</button></div></div>
+  <div class="modes" id="modes"><button data-modo="fin">Finanzas</button><button data-modo="sm">Salsa Macha</button></div>
   <div class="tabs" id="tabs" role="tablist"></div><div id="note" class="msg" hidden></div><div id="view"></div>`;
-  $("tabs").innerHTML=(owner()?TABS_O:TABS_E).map(([k,l])=>`<button role="tab" data-tab="${k}">${l}</button>`).join("");
+  drawTabs();
   $("tabs").onclick=async e=>{const t=e.target.dataset.tab;if(!t)return;if(t==="salir"){await sb.auth.signOut();return boot()}
-    if(t==="resumen"){cur=new Date();cur.setDate(1)}tab=t;edit=null;armed=false;say("");render()};
+    if(t==="resumen"||t==="s_resumen"){cur=new Date();cur.setDate(1)}tab=t;edit=null;rdet=null;armed=false;say("");render()};
   $("prev").onclick=()=>{cur.setMonth(cur.getMonth()-1);render()};
   $("next").onclick=()=>{cur.setMonth(cur.getMonth()+1);render()};
   render();
 }
 function render(){
   if(!$("view"))return;
-  $("mnav").hidden=tab!=="gastos"||!!edit;
+  $("mnav").hidden=!["gastos","s_gastos","s_compras"].includes(tab)||!!edit;
+  $("ttl").textContent=modo==="sm"?"Salsa Macha":"Mis Gastos";
+  document.querySelectorAll("#modes button").forEach(b=>b.setAttribute("aria-selected",b.dataset.modo===modo));
   $("mlabel").textContent=cur.toLocaleDateString("es-MX",{month:"long",year:"numeric"});
   document.querySelectorAll("#tabs button").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
-  const v=edit?vEdit:{resumen:vResumen,gastos:vGastos,compartidos:vCompartidos,fijos:vFijos,hipoteca:vHipoteca,acceso:vAcceso}[tab];
+  const V={resumen:vResumen,gastos:vGastos,compartidos:vCompartidos,fijos:vFijos,hipoteca:vHipoteca,acceso:vAcceso,s_resumen:vSResumen,s_gastos:vSGastos,s_compras:vSCompras,s_inv:vSInv,s_rec:vSRec,s_precios:vSPrecios};
+  const v=edit?vEdit:(tab==="s_rec"&&rdet?vRecDet:V[tab]);
   $("view").innerHTML=v?v():"";
   if(tab==="acceso"&&!edit&&$("out"))$("out").onclick=async()=>{await sb.auth.signOut();boot()};
 }
@@ -444,6 +844,7 @@ function render(){
 /* ---------- eventos ---------- */
 document.addEventListener("change",e=>{
   const t=e.target;
+  smChange(t);
   if(t.id==="g-tipo")$("g-pctl").hidden=t.value!=="compartido";
   if(t.id==="e-tipo"&&$("e-pctl"))$("e-pctl").hidden=t.value!=="compartido";
   if(t.id==="g-tarj")document.querySelectorAll(".efe").forEach(l=>l.hidden=t.value!=="Efectivo");
@@ -455,10 +856,11 @@ document.addEventListener("change",e=>{
     else run(sb.from("fin_gastos").update({cotejado:t.checked}).eq("id",id));
   }
 });
-const TABLA={gastos:"fin_gastos",fijos:"fin_fijos",pagos:"fin_hipoteca_pagos"};
+const TABLA={gastos:"fin_gastos",fijos:"fin_fijos",pagos:"fin_hipoteca_pagos",sm_gastos:"sm_gastos",sm_ing:"sm_ingredientes",sm_rec:"sm_recetas",sm_item:"sm_receta_items"};
 document.addEventListener("click",e=>{
   const t=e.target.closest("button")||e.target,a=t.dataset&&t.dataset.act;
   if(t.tagName==="BUTTON"&&document.activeElement&&document.activeElement.blur)document.activeElement.blur();
+  if(smClick(t,a))return;
   if(t.dataset&&t.dataset.go){tab=t.dataset.go;edit=null;say("");render();return}
   if(t.dataset&&t.dataset.pay){edit={k:"pagos",id:t.dataset.pay,preset:true};armed=false;say("");render();window.scrollTo(0,0);return}
   if(t.dataset&&t.dataset.saldar){edit={k:"gastos",id:t.dataset.saldar,preset:"saldar"};armed=false;say("");render();window.scrollTo(0,0);return}
@@ -471,11 +873,13 @@ document.addEventListener("click",e=>{
     run(sb.from("fin_gastos").update({saldada:true,...(FECHA_OK?{saldada_fecha:fs}:{}),...(FORMA_OK?{saldada_forma:sforma||null,saldada_obs:sobs||null}:{})}).eq("tipo","compartido").eq("saldada",false)).then(ok=>{armed=false;sfecha="";sforma="Efectivo";sobs="";render();if(ok)say("Cuenta saldada el "+fd(fs)+".")});return}
   if(a==="del"){
     if(!armed){armed=true;render();return}
+    if(edit.k.startsWith("sm_")){seq(()=>smDelete(edit.k,edit.id)).then(ok=>{if(ok){edit=null;armed=false;render()}});return}
     run(sb.from(TABLA[edit.k]).delete().eq("id",edit.id)).then(ok=>{if(ok){edit=null;armed=false;render()}});return}
   if(a==="deli")run(sb.from("fin_invitados").delete().eq("email",t.dataset.id));
 });
 document.addEventListener("submit",e=>{
   e.preventDefault();const f=e.target.id;
+  if(smSubmit(f))return;
   if(f==="fg"){
     const o=owner(),tarjeta=$("g-tarj").value,tipo=o?$("g-tipo").value:"compartido";
     const g={monto:parseFloat($("g-amt").value),tarjeta,fecha:$("g-date").value,tipo,nota:$("g-note").value.trim()||null};
@@ -502,6 +906,7 @@ document.addEventListener("submit",e=>{
   }
   if(f==="fe"){
     const {k,id}=edit;let patch;
+    if(k.startsWith("sm_")){smEditSubmit(k,id);return}
     const monto=parseFloat($("e-amt").value);if(!(monto>0))return;
     if(k==="gastos"){
       const tipo=owner()?$("e-tipo").value:"compartido";
